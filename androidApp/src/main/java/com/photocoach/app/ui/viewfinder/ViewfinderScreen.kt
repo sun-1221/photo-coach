@@ -360,7 +360,7 @@ private fun PreviewPane(
                 factory = { context ->
                     PreviewView(context).apply {
                         implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                        scaleType = PreviewView.ScaleType.FILL_CENTER
+                        scaleType = PreviewView.ScaleType.FIT_CENTER
                         onPreviewReady(this)
                     }
                 },

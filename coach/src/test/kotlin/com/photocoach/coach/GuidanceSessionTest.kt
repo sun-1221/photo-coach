@@ -329,6 +329,63 @@ class GuidanceSessionTest {
         assertEquals(CueId.FIND_PERSON, session.snapshot().currentCue?.id)
     }
 
+    @Test
+    fun missingPersonRecoveryDoesNotTimeoutToFalseReady() {
+        val session = readySession()
+        val recovery = Cue(
+            CueId.FIND_PERSON,
+            "请露出脸，或靠近一点",
+            Audience.SHOOTER,
+            Channel.COMPOSITION,
+            priority = 118,
+            critical = true,
+        )
+        stabilize(session, output(listOf(recovery)), Signals())
+
+        session.tick(200 + GuidanceSession.SHOOTER_TIMEOUT_MS + 1)
+
+        assertInstanceOf(GuidanceStage.Action::class.java, session.snapshot().stage)
+        assertEquals(CueId.FIND_PERSON, session.snapshot().currentCue?.id)
+    }
+
+    @Test
+    fun missingPersonRecoveryCanReappearAfterItWasResolvedAndReady() {
+        val session = readySession()
+        val recovery = Cue(
+            CueId.FIND_PERSON,
+            "请露出脸，或靠近一点",
+            Audience.SHOOTER,
+            Channel.COMPOSITION,
+            priority = 118,
+            critical = true,
+        )
+        stabilize(session, output(listOf(recovery)), Signals())
+        session.onCandidates(
+            output(emptyList()),
+            Signals(faceCount = 1, poseAvailable = true),
+            1_800,
+        )
+        session.onCandidates(
+            output(emptyList()),
+            Signals(faceCount = 1, poseAvailable = true),
+            2_100,
+        )
+        session.onCandidates(
+            output(emptyList()),
+            Signals(faceCount = 1, poseAvailable = true),
+            2_400,
+        )
+        session.tick(3_000)
+        assertInstanceOf(GuidanceStage.Ready::class.java, session.snapshot().stage)
+
+        session.onCandidates(output(listOf(recovery)), Signals(), 3_100)
+        session.onCandidates(output(listOf(recovery)), Signals(), 3_400)
+        session.onCandidates(output(listOf(recovery)), Signals(), 3_700)
+
+        assertInstanceOf(GuidanceStage.Action::class.java, session.snapshot().stage)
+        assertEquals(CueId.FIND_PERSON, session.snapshot().currentCue?.id)
+    }
+
     private fun readySession(): GuidanceSession = GuidanceSession().apply { onCameraReady(0) }
 
     private fun stabilize(session: GuidanceSession, output: CoachOutput, signals: Signals) {

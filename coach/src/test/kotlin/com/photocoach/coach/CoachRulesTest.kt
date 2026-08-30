@@ -157,4 +157,29 @@ class CoachRulesTest {
         assertEquals(CueId.CHIN_DOWN, headBack.cues.first { it.channel == Channel.POSE }.id)
         assertFalse(acceptable.cues.any { it.channel == Channel.POSE })
     }
+
+    @Test
+    fun faceDetailsProduceConservativeSubjectCuesWithoutRequiringPose() {
+        val turned = engine.evaluate(
+            Signals(faceCount = 1, faceRatio = 0.16f, faceTurnedAway = true),
+            ShotIntent.CLOSE_UP,
+        )
+        val blink = engine.evaluate(
+            Signals(faceCount = 1, faceRatio = 0.16f, eyesLikelyClosed = true),
+            ShotIntent.CLOSE_UP,
+        )
+        val expression = engine.evaluate(
+            Signals(faceCount = 1, faceRatio = 0.16f, expressionNeedsRelaxing = true),
+            ShotIntent.CLOSE_UP,
+        )
+        val uncertain = engine.evaluate(
+            Signals(faceCount = 1, faceRatio = 0.16f),
+            ShotIntent.CLOSE_UP,
+        )
+
+        assertEquals(CueId.TURN_FACE_TO_CAMERA, turned.cues.single { it.channel == Channel.POSE }.id)
+        assertEquals(CueId.OPEN_EYES, blink.cues.single { it.channel == Channel.POSE }.id)
+        assertEquals(CueId.RELAX_EXPRESSION, expression.cues.single { it.channel == Channel.POSE }.id)
+        assertFalse(uncertain.cues.any { it.channel == Channel.POSE })
+    }
 }

@@ -379,8 +379,15 @@ class GuidanceSession(
         nowMs: Long,
     ) {
         refreshOptionalCandidates(cues)
+        val liveIds = cues.mapTo(mutableSetOf(), Cue::id)
+        val persistentRecovery = stableShooterCue
+            ?.takeIf { it.id in liveIds && it.id in PERSISTENT_RECOVERY_CUES }
+            ?.takeIf { directionAllowed(it, nowMs) }
+        if (persistentRecovery != null) {
+            showPersistentRecoveryCue(persistentRecovery, signals, nowMs)
+            return
+        }
         if (requiredStepsUsed < MAX_REQUIRED_STEPS) {
-            val liveIds = cues.mapTo(mutableSetOf(), Cue::id)
             val nextRequired = listOfNotNull(stableShooterCue, stableSubjectCue)
                 .filter { it.id in liveIds && it.id !in presentedCueIds }
                 .filter(Cue::critical)
@@ -416,7 +423,9 @@ class GuidanceSession(
         if (current.step == RequiredStep.SHOOTER) {
             val shownLongEnough = nowMs - current.shownAtMs >= MIN_ACTION_DISPLAY_MS
             val improvedLongEnough = current.resolvedSinceMs?.let { nowMs - it >= ACTION_RESOLVED_STABLE_MS } == true
-            if (shownLongEnough && improvedLongEnough || nowMs - current.shownAtMs >= SHOOTER_TIMEOUT_MS) {
+            val timedOut = current.cue.id !in PERSISTENT_RECOVERY_CUES &&
+                nowMs - current.shownAtMs >= SHOOTER_TIMEOUT_MS
+            if (shownLongEnough && improvedLongEnough || timedOut) {
                 enterSubjectOrReady(nowMs)
             }
             return
@@ -461,6 +470,18 @@ class GuidanceSession(
             displayNumber = requiredStepsUsed,
         )
         return true
+    }
+
+    private fun showPersistentRecoveryCue(cue: Cue, signals: Signals, nowMs: Long) {
+        presentedCueIds += cue.id
+        rememberDirection(cue, nowMs)
+        baselineSignals = signals
+        stage = GuidanceStage.Action(
+            step = RequiredStep.SHOOTER,
+            cue = cue,
+            shownAtMs = nowMs,
+            displayNumber = requiredStepsUsed.coerceIn(1, MAX_REQUIRED_STEPS),
+        )
     }
 
     private fun enterReady(retainedSubjectCue: Cue? = null) {
@@ -595,5 +616,6 @@ class GuidanceSession(
         const val SAVE_SUCCESS_DURATION_MS = 1_500L
         const val FACE_RATIO_IMPROVEMENT = 0.02f
         private const val MAX_REQUIRED_STEPS = 2
+        private val PERSISTENT_RECOVERY_CUES = setOf(CueId.FIND_PERSON, CueId.CLEAN_LENS)
     }
 }

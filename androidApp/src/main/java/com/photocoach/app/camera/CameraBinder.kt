@@ -4,7 +4,10 @@ import android.content.Context
 import android.net.Uri
 import android.os.StatFs
 import android.os.SystemClock
+import android.util.LayoutDirection
+import android.util.Rational
 import android.util.Size
+import android.view.Surface
 import androidx.camera.core.AspectRatio
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
@@ -14,6 +17,7 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.core.UseCaseGroup
+import androidx.camera.core.ViewPort
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
@@ -50,6 +54,7 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.abs
@@ -59,6 +64,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 enum class FlashSetting { OFF, AUTO }
+
+internal fun captureViewPortDimensions(
+    aspectRatio: CaptureAspectRatio,
+    targetRotation: Int,
+): Pair<Int, Int> {
+    val portrait = targetRotation == Surface.ROTATION_0 || targetRotation == Surface.ROTATION_180
+    val landscapeDimensions = when (aspectRatio) {
+        CaptureAspectRatio.FOUR_THREE -> 4 to 3
+        CaptureAspectRatio.SIXTEEN_NINE -> 16 to 9
+    }
+    return if (portrait) landscapeDimensions.second to landscapeDimensions.first else landscapeDimensions
+}
 
 data class CapturedPhoto(
     val captureId: CaptureId,
@@ -166,11 +183,12 @@ class CameraBinder(
             .setResolutionSelector(useCaseResolution)
             .build()
             .also { it.surfaceProvider = previewView.surfaceProvider }
-        val capture = ImageCapture.Builder()
+        val captureBuilder = ImageCapture.Builder()
             .setCaptureMode(captureMode(settings.capturePriority))
             .setFlashMode(flashMode(flashSetting))
             .setResolutionSelector(useCaseResolution)
-            .build()
+        if (settings.capturePriority == CapturePriority.FOCUS) captureBuilder.setJpegQuality(100)
+        val capture = captureBuilder.build()
         imageCapture = capture
 
         val coachAnalyzer = CoachAnalyzer(
@@ -221,10 +239,17 @@ class CameraBinder(
             null
         }
         videoCapture = candidateVideoCapture
-        val viewPort = previewView.viewPort ?: run {
-            onError(IllegalStateException("preview viewport is not ready"))
-            return null
+        val targetRotation = preview.targetRotation
+        val (viewPortWidth, viewPortHeight) = captureViewPortDimensions(settings.aspectRatio, targetRotation)
+        val viewPortLayoutDirection = if (previewView.layoutDirection == LayoutDirection.RTL) {
+            LayoutDirection.RTL
+        } else {
+            LayoutDirection.LTR
         }
+        val viewPort = ViewPort.Builder(Rational(viewPortWidth, viewPortHeight), targetRotation)
+            .setScaleType(ViewPort.FILL_CENTER)
+            .setLayoutDirection(viewPortLayoutDirection)
+            .build()
         fun useCaseGroup(video: VideoCapture<Recorder>?): UseCaseGroup = UseCaseGroup.Builder()
             .setViewPort(viewPort)
             .addUseCase(preview)
@@ -366,6 +391,37 @@ class CameraBinder(
     fun unlockAeAf() {
         camera?.cameraControl?.cancelFocusAndMetering()
         aeAfLocked = false
+    }
+
+    fun prepareQualityCapture(x: Float?, y: Float?, onReady: () -> Unit) {
+        val activeCamera = camera
+        val view = previewView
+        if (activeCamera == null || view == null || aeAfLocked || view.width <= 0 || view.height <= 0) {
+            onReady()
+            return
+        }
+        val point = view.meteringPointFactory.createPoint(
+            x?.coerceIn(0f, view.width.toFloat()) ?: view.width / 2f,
+            y?.coerceIn(0f, view.height.toFloat()) ?: view.height / 2f,
+        )
+        val action = FocusMeteringAction.Builder(
+            point,
+            FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE,
+        ).setAutoCancelDuration(3, TimeUnit.SECONDS).build()
+        val completed = AtomicBoolean(false)
+        val finish = Runnable {
+            if (completed.compareAndSet(false, true)) onReady()
+        }
+        view.postDelayed(finish, QUALITY_FOCUS_TIMEOUT_MS)
+        val future = activeCamera.cameraControl.startFocusAndMetering(action)
+        future.addListener(
+            {
+                runCatching { future.get() }
+                view.removeCallbacks(finish)
+                finish.run()
+            },
+            mainExecutor,
+        )
     }
 
     fun capture(
@@ -1111,6 +1167,7 @@ class CameraBinder(
     private companion object {
         const val MIN_ZOOM_GESTURE_DELTA = 0.005f
         const val MIN_ZOOM_RATIO_DELTA = 0.005f
+        const val QUALITY_FOCUS_TIMEOUT_MS = 900L
         const val LIVE_POST_SHUTTER_MS = 1_500L
         const val MIN_STILL_CAPTURE_FREE_BYTES = 24L * 1024L * 1024L
         const val MIN_LIVE_CAPTURE_FREE_BYTES = 64L * 1024L * 1024L

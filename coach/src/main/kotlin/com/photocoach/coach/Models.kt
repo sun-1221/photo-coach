@@ -119,6 +119,15 @@ enum class CueId {
     @SerialName("lower_exposure")
     LOWER_EXPOSURE,
 
+    @SerialName("turn_face_to_camera")
+    TURN_FACE_TO_CAMERA,
+
+    @SerialName("open_eyes")
+    OPEN_EYES,
+
+    @SerialName("relax_expression")
+    RELAX_EXPRESSION,
+
     @SerialName("chin_down")
     CHIN_DOWN,
 
@@ -184,6 +193,9 @@ data class Signals(
     val personCentered: Boolean = false,
     val faceTooLowInFrame: Boolean = false,
     val focusOnFace: Boolean = true,
+    val faceTurnedAway: Boolean = false,
+    val eyesLikelyClosed: Boolean = false,
+    val expressionNeedsRelaxing: Boolean = false,
     val headTiltedBack: Boolean = false,
     val shouldersSquare: Boolean = false,
     val weightEven: Boolean = false,

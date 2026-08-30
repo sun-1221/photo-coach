@@ -30,6 +30,16 @@ object SignalFactory {
         val viewArea = (viewWidth * viewHeight).coerceAtLeast(1).toFloat()
         val largest = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
         val faceRatio = largest?.let { (it.boundingBox.width() * it.boundingBox.height()) / viewArea } ?: 0f
+        val faceDetails = largest?.let {
+            FaceDetailClassifier.classify(
+                FaceDetailInput(
+                    yawDegrees = it.headEulerAngleY,
+                    smileProbability = it.smilingProbability,
+                    leftEyeOpenProbability = it.leftEyeOpenProbability,
+                    rightEyeOpenProbability = it.rightEyeOpenProbability,
+                ),
+            )
+        } ?: FaceDetailSignals()
         val faceCenterY = largest?.boundingBox?.exactCenterY()
         val faceDarker = if (faceCenterY != null && viewHeight > 0) {
             val normalized = (faceCenterY / viewHeight).coerceIn(0f, 1f)
@@ -88,6 +98,9 @@ object SignalFactory {
             faceTooLowInFrame = largest != null && viewHeight > 0 &&
                 largest.boundingBox.exactCenterY() > viewHeight * 0.48f,
             focusOnFace = focusOnFace,
+            faceTurnedAway = faceDetails.faceTurnedAway,
+            eyesLikelyClosed = faceDetails.eyesLikelyClosed,
+            expressionNeedsRelaxing = faceDetails.expressionNeedsRelaxing,
             headTiltedBack = largest?.headEulerAngleX?.let { it > 12f } == true,
             shouldersSquare = poseSignals.shouldersSquare,
             weightEven = poseSignals.weightEven,

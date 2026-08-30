@@ -72,8 +72,11 @@ object CueSelector {
         scene: SceneDefinition?,
         signals: Signals,
     ): Cue? {
-        if (!signals.poseAvailable) return null
         return when {
+            signals.faceTurnedAway -> catalog.cue(CueId.TURN_FACE_TO_CAMERA)
+            signals.eyesLikelyClosed -> catalog.cue(CueId.OPEN_EYES)
+            signals.expressionNeedsRelaxing -> catalog.cue(CueId.RELAX_EXPRESSION)
+            !signals.poseAvailable -> null
             signals.headTiltedBack -> catalog.cue(CueId.CHIN_DOWN)
             signals.shouldersSquare -> sceneAngleCue(scene) ?: catalog.cue(CueId.ANGLE_BODY)
             signals.weightEven -> catalog.cue(CueId.WEIGHT_BACK)

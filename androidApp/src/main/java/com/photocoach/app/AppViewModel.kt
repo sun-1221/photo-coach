@@ -586,7 +586,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _ui.update {
             it.copy(
                 livePhotoEnabled = enabled,
-                modePreference = if (enabled) CameraModePreference.PHOTO else it.modePreference,
                 controlMessage = if (enabled) "正在准备无声 Live；不可用时会保存普通照片" else "Live 已关闭",
             )
         }

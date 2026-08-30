@@ -34,6 +34,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import com.photocoach.app.camera.CameraBinder
 import com.photocoach.app.camera.CameraModePreference
+import com.photocoach.app.camera.CapturePriority
+import com.photocoach.app.camera.CaptureSpec
 import com.photocoach.app.creative.ParameterAction
 import com.photocoach.app.creative.ParameterSuggestion
 import com.photocoach.app.tts.GuidanceTts
@@ -357,6 +359,18 @@ class MainActivity : ComponentActivity() {
             viewModel.onSaveFailed(IllegalStateException("拍摄标识不可用"), retryAvailable = false)
             return
         }
+        val ui = viewModel.ui.value
+        val face = ui.overlay?.faceRects?.maxByOrNull { it.width() * it.height() }
+        if (ui.capturePriority == CapturePriority.FOCUS) {
+            camera.prepareQualityCapture(face?.centerX(), face?.centerY()) {
+                performCapture(spec)
+            }
+        } else {
+            performCapture(spec)
+        }
+    }
+
+    private fun performCapture(spec: CaptureSpec) {
         camera.capture(
             spec = spec,
             onSaveProgress = viewModel::onSaveProgress,
