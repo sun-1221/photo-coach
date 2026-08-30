@@ -1,0 +1,30 @@
+# Gradle
+.gradle/
+build/
+**/build/
+
+# Android
+local.properties
+*.iml
+.idea/
+.cxx/
+captures/
+.avd/
+
+# Kotlin
+.kotlin/
+
+# .NET
+**/bin/
+**/obj/
+*.user
+*.suo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Secrets
+.env
+*.keystore
+google-services.json

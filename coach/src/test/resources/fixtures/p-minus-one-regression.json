@@ -1,0 +1,70 @@
+[
+  {
+    "id": "window-enters-and-uses-scene-cues",
+    "intent": "close_up",
+    "signals": { "faceCount": 1, "faceRatio": 0.16, "coarseScene": "indoor", "oneSideBrighter": true, "poseAvailable": true, "shouldersSquare": true },
+    "expectScene": "window_portrait",
+    "mustInclude": ["靠近窗边", "身体转向窗户"],
+    "mustExclude": ["开闪光"]
+  },
+  {
+    "id": "window-does-not-match-outdoors",
+    "intent": "close_up",
+    "signals": { "faceCount": 1, "faceRatio": 0.16, "coarseScene": "outdoor", "oneSideBrighter": true },
+    "expectNoScene": true,
+    "rejectScene": "window_portrait"
+  },
+  {
+    "id": "scenery-enters-from-explicit-intent",
+    "intent": "person_with_scenery",
+    "signals": { "faceCount": 1, "faceRatio": 0.08, "coarseScene": "outdoor", "hasLargeEnvironment": true, "personCentered": true, "poseAvailable": true, "shouldersSquare": true },
+    "expectScene": "outdoor_with_scenery",
+    "mustInclude": ["左或右三分线", "身体侧一点"],
+    "mustExclude": ["切长焦", "自动拍"]
+  },
+  {
+    "id": "scenery-small-face-keeps-landmark",
+    "intent": "person_with_scenery",
+    "signals": { "faceCount": 1, "faceRatio": 0.03, "coarseScene": "outdoor", "hasTelephotoPreset": true, "hasLargeEnvironment": true },
+    "expectScene": "outdoor_with_scenery",
+    "mustInclude": ["略走近", "地标留全"],
+    "mustExclude": ["长焦"]
+  },
+  {
+    "id": "close-up-low-face-uses-upper-third-guidance",
+    "intent": "close_up",
+    "signals": { "faceCount": 1, "faceRatio": 0.16, "faceTooLowInFrame": true },
+    "expectNoScene": true,
+    "mustInclude": ["把脸放到上方三分线"]
+  },
+  {
+    "id": "close-up-lock-rejects-scenery-pack",
+    "intent": "close_up",
+    "signals": { "faceCount": 1, "faceRatio": 0.16, "coarseScene": "outdoor", "hasLargeEnvironment": true, "personCentered": true },
+    "expectNoScene": true,
+    "rejectScene": "outdoor_with_scenery"
+  },
+  {
+    "id": "backlight-enters-and-focuses-face",
+    "intent": "close_up",
+    "signals": { "faceCount": 1, "faceRatio": 0.16, "coarseScene": "outdoor", "faceDarkerThanScene": true, "poseAvailable": true, "shouldersSquare": true },
+    "expectScene": "backlit_portrait",
+    "mustInclude": ["点一下脸", "略侧身"],
+    "mustExclude": ["开闪光", "剪影"]
+  },
+  {
+    "id": "backlight-respects-scenery-one-x",
+    "intent": "person_with_scenery",
+    "signals": { "faceCount": 1, "faceRatio": 0.08, "coarseScene": "outdoor", "faceDarkerThanScene": true, "hasTelephotoPreset": true },
+    "expectScene": "backlit_portrait",
+    "mustInclude": ["点一下脸"],
+    "mustExclude": ["切长焦"]
+  },
+  {
+    "id": "multiple-faces-do-not-enter-single-person-scene",
+    "intent": "close_up",
+    "signals": { "faceCount": 2, "faceRatio": 0.16, "coarseScene": "indoor", "oneSideBrighter": true, "poseAvailable": true },
+    "expectNoScene": true,
+    "mustExclude": ["身体转向窗户", "合影模式"]
+  }
+]

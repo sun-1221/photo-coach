@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">拍照教练</string>
+    <string name="consent_title">开相机前说明</string>
+    <string name="consent_body">本机分析人脸和身体关键点，只用于构图与短口令。不识别你是谁，不建立人脸库，P-1 不上传取景画面。不同意就不能进入取景器。</string>
+    <string name="consent_agree">同意并继续</string>
+    <string name="consent_deny">暂不使用</string>
+    <string name="consent_denied_hint">未同意则无法进入取景器。</string>
+    <string name="permission_denied_title">需要相机权限</string>
+    <string name="permission_denied_body">没有相机权限就无法取景。本应用只申请相机，不会读取整本相册、定位或麦克风。</string>
+    <string name="permission_retry">再试一次</string>
+    <string name="permission_settings">去系统设置</string>
+    <string name="camera_busy">相机被占用或打不开，请重试或前往系统设置</string>
+</resources>

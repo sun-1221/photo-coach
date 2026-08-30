@@ -1,0 +1,19 @@
+---
+description: photo-coach 编码入口、文档权威与口令冲突优先级
+alwaysApply: true
+---
+
+# photo-coach
+
+编码、修复、补测试或只读规范检查时，先使用 `photo-coach-coding` Skill（`.agents/skills/photo-coach-coding`）。
+
+- 产品与架构：`docs/requirement.md`、`docs/architecture.md`
+
+
+口令冲突优先级以 `docs/requirement.md` 第 11 节为准。同一时刻只启用一套场景；更具体的光位/构图包优先：
+
+```
+自拍 > 人像光位（窗边 / 树荫 / 逆光 / 黄金时段 / 阴天 / 室内暖光）> 人+地标 > 建筑 / 风景 > 街拍 > 通用
+```
+
+不要简化成「人像 > 旅行 > 通用」。P1 包只在第一版开关打开后才参与匹配。

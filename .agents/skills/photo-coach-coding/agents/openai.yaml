@@ -1,0 +1,7 @@
+interface:
+  display_name: "Photo Coach Coding"
+  short_description: "Apply versioned photo-coach coding and validation rules"
+  default_prompt: "Use $photo-coach-coding to implement and validate a scoped photo-coach change."
+
+policy:
+  allow_implicit_invocation: true

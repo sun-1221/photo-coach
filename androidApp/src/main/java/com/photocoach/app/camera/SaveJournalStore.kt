@@ -1,0 +1,95 @@
+package com.photocoach.app.camera
+
+import com.photocoach.app.creative.CaptureId
+import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+
+@Serializable
+data class SaveJournal(
+    val captureId: String,
+    val sequence: Int,
+    val takenAtMillis: Long,
+    val sourcePath: String,
+    val motionPath: String? = null,
+    val packagedPath: String? = null,
+    val displayName: String,
+    val style: String,
+    val exposureStops: Float = 0f,
+    val contrast: Float = 0f,
+    val saturation: Float = 0f,
+    val temperature: Float = 0f,
+    val tint: Float = 0f,
+    val fade: Float = 0f,
+    val styleStrength: Float = 1f,
+    val derivativeQuality: String = DerivativeQuality.FULL.name,
+    val completedStages: Set<String> = emptySet(),
+    val failedStage: String? = null,
+    val error: String? = null,
+    val pendingUri: String? = null,
+    val originalUri: String? = null,
+    val derivativeUri: String? = null,
+    val derivativePendingUri: String? = null,
+    val derivativePath: String? = null,
+    val motionPhotoRequested: Boolean = false,
+    val motionPhotoFallback: Boolean = false,
+    val derivativeRequested: Boolean = false,
+) {
+    init {
+        CaptureId(captureId)
+        require(sequence in 1..99)
+    }
+
+    val key: String get() = "${captureId}_S${sequence.toString().padStart(2, '0')}"
+}
+
+class SaveJournalStore(private val directory: File) {
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
+
+    fun write(record: SaveJournal): File {
+        check(directory.exists() || directory.mkdirs()) { "cannot create save journal directory" }
+        val target = fileFor(record)
+        val temporary = File(directory, "${target.name}.tmp")
+        try {
+            temporary.writeText(json.encodeToString(record), Charsets.UTF_8)
+            atomicReplace(temporary, target)
+            return target
+        } catch (error: Throwable) {
+            temporary.delete()
+            throw error
+        }
+    }
+
+    fun readAll(): List<SaveJournal> {
+        if (!directory.isDirectory) return emptyList()
+        directory.listFiles { file -> file.isFile && file.extension == "json" }
+            ?.sortedBy(File::getName)
+            .orEmpty()
+            .mapNotNull { file -> runCatching { json.decodeFromString<SaveJournal>(file.readText(Charsets.UTF_8)) }.getOrNull() }
+            .let { return it }
+    }
+
+    fun delete(record: SaveJournal) {
+        fileFor(record).delete()
+    }
+
+    private fun fileFor(record: SaveJournal): File = File(directory, "${record.key}.json")
+
+    private fun atomicReplace(temporary: File, target: File) {
+        try {
+            Files.move(
+                temporary.toPath(),
+                target.toPath(),
+                StandardCopyOption.ATOMIC_MOVE,
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+}
