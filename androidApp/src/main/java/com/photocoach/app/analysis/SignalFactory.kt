@@ -34,20 +34,19 @@ object SignalFactory {
             FaceDetailClassifier.classify(
                 FaceDetailInput(
                     yawDegrees = it.headEulerAngleY,
-                    smileProbability = it.smilingProbability,
                     leftEyeOpenProbability = it.leftEyeOpenProbability,
                     rightEyeOpenProbability = it.rightEyeOpenProbability,
                 ),
             )
         } ?: FaceDetailSignals()
-        val faceCenterY = largest?.boundingBox?.exactCenterY()
-        val faceDarker = if (faceCenterY != null && viewHeight > 0) {
-            val normalized = (faceCenterY / viewHeight).coerceIn(0f, 1f)
-            val faceRegionGuess = stats.meanY - (0.5f - normalized) * 8f
-            stats.topMean > faceRegionGuess + 18f || stats.meanY > faceRegionGuess + 12f
-        } else {
-            false
-        }
+        val faceDarker = largest?.boundingBox?.let { box ->
+            stats.lumaGrid?.let { grid ->
+                FaceLuminanceClassifier.isDarkerThanBackground(
+                    grid,
+                    LumaRegion(box.left.toFloat(), box.top.toFloat(), box.right.toFloat(), box.bottom.toFloat()),
+                )
+            }
+        } == true
         // FaceDetection is sensitive to phones, masks and reflected faces. Pose already
         // represents one prominent person, so keep its reliable upper-body signal unless
         // FaceDetection explicitly proves this is a multi-person frame.
@@ -59,8 +58,6 @@ object SignalFactory {
                     rightShoulder = sample(pose, PoseLandmark.RIGHT_SHOULDER),
                     leftHip = sample(pose, PoseLandmark.LEFT_HIP),
                     rightHip = sample(pose, PoseLandmark.RIGHT_HIP),
-                    leftAnkle = sample(pose, PoseLandmark.LEFT_ANKLE),
-                    rightAnkle = sample(pose, PoseLandmark.RIGHT_ANKLE),
                     leftEar = sample(pose, PoseLandmark.LEFT_EAR),
                     rightEar = sample(pose, PoseLandmark.RIGHT_EAR),
                     leftWrist = sample(pose, PoseLandmark.LEFT_WRIST),
@@ -100,10 +97,8 @@ object SignalFactory {
             focusOnFace = focusOnFace,
             faceTurnedAway = faceDetails.faceTurnedAway,
             eyesLikelyClosed = faceDetails.eyesLikelyClosed,
-            expressionNeedsRelaxing = faceDetails.expressionNeedsRelaxing,
             headTiltedBack = largest?.headEulerAngleX?.let { it > 12f } == true,
             shouldersSquare = poseSignals.shouldersSquare,
-            weightEven = poseSignals.weightEven,
             shouldersRaised = poseSignals.shouldersRaised,
             handsIdle = poseSignals.handsNeedPlacement,
             skyOverexposed = stats.topMean > 200f,

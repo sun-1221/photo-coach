@@ -125,17 +125,11 @@ enum class CueId {
     @SerialName("open_eyes")
     OPEN_EYES,
 
-    @SerialName("relax_expression")
-    RELAX_EXPRESSION,
-
     @SerialName("chin_down")
     CHIN_DOWN,
 
     @SerialName("angle_body")
     ANGLE_BODY,
-
-    @SerialName("weight_back")
-    WEIGHT_BACK,
 
     @SerialName("relax_shoulders")
     RELAX_SHOULDERS,
@@ -195,10 +189,8 @@ data class Signals(
     val focusOnFace: Boolean = true,
     val faceTurnedAway: Boolean = false,
     val eyesLikelyClosed: Boolean = false,
-    val expressionNeedsRelaxing: Boolean = false,
     val headTiltedBack: Boolean = false,
     val shouldersSquare: Boolean = false,
-    val weightEven: Boolean = false,
     val shouldersRaised: Boolean = false,
     val handsIdle: Boolean = false,
     val skyOverexposed: Boolean = false,

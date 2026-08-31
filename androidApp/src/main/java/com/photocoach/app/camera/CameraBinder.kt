@@ -16,6 +16,7 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.core.SessionConfig
 import androidx.camera.core.UseCaseGroup
 import androidx.camera.core.ViewPort
 import androidx.camera.core.resolutionselector.ResolutionSelector
@@ -186,6 +187,7 @@ class CameraBinder(
         val captureBuilder = ImageCapture.Builder()
             .setCaptureMode(captureMode(settings.capturePriority))
             .setFlashMode(flashMode(flashSetting))
+            .setOutputFormat(stillCaptureOutputFormat())
             .setResolutionSelector(useCaseResolution)
         if (settings.capturePriority == CapturePriority.FOCUS) captureBuilder.setJpegQuality(100)
         val capture = captureBuilder.build()
@@ -221,24 +223,23 @@ class CameraBinder(
         var extensionFallback = !liveRequested && effectiveRequestedMode != SuggestedMode.PHOTO && choice == ExtensionChoice.Standard
         livePhotoAvailable = false
         liveFallbackReason = null
-        val candidateVideoCapture = if (liveRequested) {
-            runCatching {
-                Recorder.Builder()
-                    .setExecutor(videoExecutor)
-                    .setQualitySelector(QualitySelector.from(Quality.HD))
-                    .build()
-                    .also { recorder = it }
-                    .let { VideoCapture.withOutput(it) }
-            }.getOrElse {
-                recorder = null
-                liveFallbackReason = "编码器不可用，已回退普通照片"
-                null
+        recorder = null
+        videoCapture = null
+        val liveCandidates: List<Pair<Recorder, VideoCapture<Recorder>>> = if (liveRequested) {
+            LIVE_VIDEO_TIER_FALLBACK_ORDER.mapNotNull { tier ->
+                runCatching {
+                    val candidateRecorder = Recorder.Builder()
+                        .setExecutor(videoExecutor)
+                        .setQualitySelector(QualitySelector.from(tier.toCameraXQuality()))
+                        .build()
+                    candidateRecorder to VideoCapture.withOutput(candidateRecorder)
+                }.getOrNull()
+            }.also {
+                if (it.isEmpty()) liveFallbackReason = "编码器不可用，已回退普通照片"
             }
         } else {
-            recorder = null
-            null
+            emptyList()
         }
-        videoCapture = candidateVideoCapture
         val targetRotation = preview.targetRotation
         val (viewPortWidth, viewPortHeight) = captureViewPortDimensions(settings.aspectRatio, targetRotation)
         val viewPortLayoutDirection = if (previewView.layoutDirection == LayoutDirection.RTL) {
@@ -257,26 +258,58 @@ class CameraBinder(
             .addUseCase(capture)
             .apply { if (video != null) addUseCase(video) }
             .build()
+        fun sessionConfig(video: VideoCapture<Recorder>): SessionConfig =
+            SessionConfig.Builder(listOf(preview, analysis, capture, video))
+                .setViewPort(viewPort)
+                .build()
+        fun sessionSupported(video: VideoCapture<Recorder>): Boolean = runCatching {
+            cameraProvider.getCameraInfo(selector).isSessionConfigSupported(sessionConfig(video))
+        }.getOrDefault(true)
 
-        try {
-            camera = cameraProvider.bindToLifecycle(owner, boundSelector, useCaseGroup(candidateVideoCapture))
-            livePhotoAvailable = liveRequested && candidateVideoCapture != null
-        } catch (bindingError: Exception) {
-            cameraProvider.unbindAll()
-            when {
-                candidateVideoCapture != null -> {
-                    videoCapture = null
-                    recorder = null
-                    liveFallbackReason = "当前设备无法同时绑定 Live 与实时指导，已回退普通照片"
+        if (liveRequested) {
+            var liveBindingError: Exception? = null
+            val boundCandidate = firstBindableLiveCandidate(
+                candidates = liveCandidates,
+                isSupported = { (_, candidateVideo) -> sessionSupported(candidateVideo) },
+                tryBind = { (_, candidateVideo) ->
+                    cameraProvider.unbindAll()
                     try {
-                        camera = cameraProvider.bindToLifecycle(owner, selector, useCaseGroup(null))
-                        activeMode = SuggestedMode.PHOTO
-                    } catch (fallbackError: Exception) {
-                        onError(fallbackError)
-                        return null
+                        camera = cameraProvider.bindToLifecycle(owner, selector, useCaseGroup(candidateVideo))
+                        true
+                    } catch (error: Exception) {
+                        liveBindingError = error
+                        false
                     }
+                },
+            )
+            if (boundCandidate != null) {
+                recorder = boundCandidate.first
+                videoCapture = boundCandidate.second
+                livePhotoAvailable = true
+            }
+            if (!livePhotoAvailable) {
+                cameraProvider.unbindAll()
+                recorder = null
+                videoCapture = null
+                liveFallbackReason = when {
+                    liveFallbackReason != null -> liveFallbackReason
+                    liveBindingError != null -> "当前设备无法同时绑定 Live 与实时指导，已回退普通照片"
+                    else -> "当前相机会话不支持 Live 与实时指导，已回退普通照片"
                 }
-                choice is ExtensionChoice.Enabled -> {
+                try {
+                    camera = cameraProvider.bindToLifecycle(owner, selector, useCaseGroup(null))
+                    activeMode = SuggestedMode.PHOTO
+                } catch (fallbackError: Exception) {
+                    onError(fallbackError)
+                    return null
+                }
+            }
+        } else {
+            try {
+                camera = cameraProvider.bindToLifecycle(owner, boundSelector, useCaseGroup(null))
+            } catch (bindingError: Exception) {
+                cameraProvider.unbindAll()
+                if (choice is ExtensionChoice.Enabled) {
                     try {
                         camera = cameraProvider.bindToLifecycle(owner, selector, useCaseGroup(null))
                         activeMode = SuggestedMode.PHOTO
@@ -285,8 +318,7 @@ class CameraBinder(
                         onError(fallbackError)
                         return null
                     }
-                }
-                else -> {
+                } else {
                     onError(bindingError)
                     return null
                 }
@@ -1239,6 +1271,32 @@ class CameraBinder(
             derivativeRequested = derivativeRequested,
         )
     }
+}
+
+internal enum class LiveVideoTier {
+    HD,
+    SD,
+}
+
+internal val LIVE_VIDEO_TIER_FALLBACK_ORDER: List<LiveVideoTier> =
+    listOf(LiveVideoTier.HD, LiveVideoTier.SD)
+
+internal fun stillCaptureOutputFormat(): Int = ImageCapture.OUTPUT_FORMAT_JPEG
+
+private fun LiveVideoTier.toCameraXQuality(): Quality = when (this) {
+    LiveVideoTier.HD -> Quality.HD
+    LiveVideoTier.SD -> Quality.SD
+}
+
+internal fun <T> firstBindableLiveCandidate(
+    candidates: List<T>,
+    isSupported: (T) -> Boolean,
+    tryBind: (T) -> Boolean,
+): T? {
+    for (candidate in candidates) {
+        if (isSupported(candidate) && tryBind(candidate)) return candidate
+    }
+    return null
 }
 
 private fun SaveStage.userLabel(): String = when (this) {

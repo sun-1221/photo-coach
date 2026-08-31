@@ -3,6 +3,7 @@ package com.photocoach.app.camera
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.io.OutputStream
 import java.io.RandomAccessFile
 import java.nio.charset.StandardCharsets
 import kotlin.math.min
@@ -50,13 +51,19 @@ object MotionPhotoAssembler {
         validateJpeg(jpeg)
         validateMp4(mp4)
         require(presentationTimestampUs >= -1L)
+        val rewrite = inspectJpeg(
+            length = jpeg.size.toLong(),
+            byteAt = { offset -> jpeg[offset.toInt()].toInt() and 0xff },
+            readBytes = { offset, count -> jpeg.copyOfRange(offset.toInt(), offset.toInt() + count) },
+        )
         val app1 = app1Segment(mp4.size.toLong(), presentationTimestampUs)
-        return ByteArray(jpeg.size + app1.size + mp4.size).also { output ->
-            jpeg.copyInto(output, 0, 0, 2)
-            app1.copyInto(output, 2)
-            jpeg.copyInto(output, 2 + app1.size, 2)
-            mp4.copyInto(output, jpeg.size + app1.size)
-        }
+        val cleanJpegSize = jpeg.size - rewrite.motionXmpRanges.sumOf { (it.endExclusive - it.start).toInt() }
+        val output = java.io.ByteArrayOutputStream(cleanJpegSize + app1.size + mp4.size)
+        output.write(jpeg, 0, 2)
+        output.write(app1)
+        copyByteArrayWithoutRanges(jpeg, output, rewrite.motionXmpRanges)
+        output.write(mp4)
+        return output.toByteArray()
     }
 
     fun assemble(
@@ -65,24 +72,44 @@ object MotionPhotoAssembler {
         output: File,
         presentationTimestampUs: Long,
     ): MotionPhotoContainerInfo {
-        require(jpeg.isFile && jpeg.length() >= 4L) { "JPEG source is missing" }
-        require(mp4.isFile && mp4.length() >= 12L) { "MP4 source is missing" }
-        validateJpegPrefix(jpeg.inputStream().use { readPrefix(it, 2) })
-        RandomAccessFile(jpeg, "r").use { input ->
-            input.seek(input.length() - 2L)
-            require(input.read() == 0xff && input.read() == 0xd9) { "JPEG has no EOI" }
+        val jpegPath = jpeg.canonicalFile
+        val mp4Path = mp4.canonicalFile
+        val outputPath = output.canonicalFile
+        require(outputPath != jpegPath && outputPath != mp4Path) {
+            "Motion Photo output must not overwrite either source"
         }
-        validateMp4Prefix(mp4.inputStream().use { readPrefix(it, 12) })
-        val app1 = app1Segment(mp4.length(), presentationTimestampUs)
-        output.parentFile?.let { check(it.exists() || it.mkdirs()) { "cannot create Motion Photo directory" } }
+        require(!output.exists() || output.length() == 0L) {
+            "Motion Photo output must be new or empty"
+        }
         try {
+            require(jpeg.isFile && jpeg.length() >= 4L) { "JPEG source is missing" }
+            require(mp4.isFile && mp4.length() >= 12L) { "MP4 source is missing" }
+            validateJpegPrefix(jpeg.inputStream().use { readPrefix(it, 2) })
+            val rewrite = RandomAccessFile(jpeg, "r").use { input ->
+                input.seek(input.length() - 2L)
+                require(input.read() == 0xff && input.read() == 0xd9) { "JPEG has no EOI" }
+                inspectJpeg(
+                    length = input.length(),
+                    byteAt = { offset ->
+                        input.seek(offset)
+                        input.read()
+                    },
+                    readBytes = { offset, count ->
+                        ByteArray(count).also { bytes ->
+                            input.seek(offset)
+                            input.readFully(bytes)
+                        }
+                    },
+                )
+            }
+            validateMp4Prefix(mp4.inputStream().use { readPrefix(it, 12) })
+            val app1 = app1Segment(mp4.length(), presentationTimestampUs)
+            output.parentFile?.let { check(it.exists() || it.mkdirs()) { "cannot create Motion Photo directory" } }
             output.outputStream().buffered().use { sink ->
-                jpeg.inputStream().buffered().use { source ->
-                    val soi = readPrefix(source, 2)
-                    validateJpegPrefix(soi)
-                    sink.write(soi)
+                RandomAccessFile(jpeg, "r").use { source ->
+                    sink.write(byteArrayOf(0xff.toByte(), 0xd8.toByte()))
                     sink.write(app1)
-                    source.copyTo(sink)
+                    copyFileWithoutRanges(source, sink, rewrite.motionXmpRanges)
                 }
                 mp4.inputStream().buffered().use { it.copyTo(sink) }
             }
@@ -136,6 +163,122 @@ object MotionPhotoAssembler {
         }
     }
 
+    private fun inspectJpeg(
+        length: Long,
+        byteAt: (Long) -> Int,
+        readBytes: (Long, Int) -> ByteArray,
+    ): JpegRewrite {
+        val motionXmpRanges = mutableListOf<ByteRange>()
+        var offset = 2L
+        while (offset + 1L < length) {
+            val markerStart = offset
+            if (byteAt(offset) != 0xff) throw IOException("invalid JPEG marker before scan data")
+            while (offset < length && byteAt(offset) == 0xff) offset += 1L
+            if (offset >= length) throw IOException("truncated JPEG marker")
+            val marker = byteAt(offset)
+            offset += 1L
+            if (marker == 0xda || marker == 0xd9) break
+            if (marker == 0x01 || marker in 0xd0..0xd7) continue
+            if (offset + 2L > length) throw IOException("truncated JPEG segment")
+            val segmentLength = (byteAt(offset) shl 8) or byteAt(offset + 1L)
+            if (segmentLength < 2 || offset + segmentLength > length) {
+                throw IOException("invalid JPEG segment length")
+            }
+            val payloadOffset = offset + 2L
+            val payloadLength = segmentLength - 2
+            val segmentEnd = offset + segmentLength
+            if (marker == 0xe1 && payloadLength > 0) {
+                val payload = readBytes(payloadOffset, payloadLength)
+                if (isXmpPayload(payload)) {
+                    val xmp = payload.toString(StandardCharsets.UTF_8)
+                    when {
+                        isGainMapXmp(xmp) ->
+                            throw IOException("Ultra HDR/GainMap JPEG cannot be packaged as Motion Photo")
+                        isReplaceableMotionPhotoXmp(xmp) ->
+                            motionXmpRanges += ByteRange(markerStart, segmentEnd)
+                        isMotionPhotoXmp(xmp) ->
+                            throw IOException("existing Motion XMP contains metadata that cannot be safely replaced")
+                        else ->
+                            throw IOException("existing non-Motion XMP cannot be safely merged")
+                    }
+                }
+            }
+            offset = segmentEnd
+        }
+        return JpegRewrite(motionXmpRanges)
+    }
+
+    private fun isXmpPayload(payload: ByteArray): Boolean =
+        payload.startsWith(XMP_HEADER) ||
+            payload.toString(StandardCharsets.US_ASCII).startsWith("http://ns.adobe.com/xmp/extension/")
+
+    private fun isMotionPhotoXmp(xmp: String): Boolean =
+        xmp.contains("Camera:MotionPhoto=") || xmp.contains("GCamera:MicroVideo=")
+
+    private fun isReplaceableMotionPhotoXmp(xmp: String): Boolean {
+        val expected = XMP_HEADER.toString(StandardCharsets.UTF_8) + xmpPacket(1L, -1L)
+        return normalizeOwnedMotionXmp(xmp) == normalizeOwnedMotionXmp(expected)
+    }
+
+    private fun normalizeOwnedMotionXmp(xmp: String): String = xmp
+        .replace(
+            Regex("""Camera:MotionPhotoPresentationTimestampUs="-?\d+""""),
+            """Camera:MotionPhotoPresentationTimestampUs="{timestamp}"""",
+        )
+        .replace(
+            Regex("""Item:Length="\d+""""),
+            """Item:Length="{length}"""",
+        )
+
+    private fun isGainMapXmp(xmp: String): Boolean =
+        xmp.contains("Item:Semantic=\"GainMap\"") ||
+            xmp.contains("hdrgm:") ||
+            xmp.contains("GainMapMin") ||
+            xmp.contains("GainMapMax")
+
+    private fun ByteArray.startsWith(prefix: ByteArray): Boolean =
+        size >= prefix.size && prefix.indices.all { index -> this[index] == prefix[index] }
+
+    private fun copyByteArrayWithoutRanges(
+        jpeg: ByteArray,
+        sink: OutputStream,
+        ranges: List<ByteRange>,
+    ) {
+        var cursor = 2
+        for (range in ranges.sortedBy(ByteRange::start)) {
+            val start = range.start.toInt()
+            if (start > cursor) sink.write(jpeg, cursor, start - cursor)
+            cursor = range.endExclusive.toInt()
+        }
+        if (cursor < jpeg.size) sink.write(jpeg, cursor, jpeg.size - cursor)
+    }
+
+    private fun copyFileWithoutRanges(
+        source: RandomAccessFile,
+        sink: OutputStream,
+        ranges: List<ByteRange>,
+    ) {
+        var cursor = 2L
+        for (range in ranges.sortedBy(ByteRange::start)) {
+            copyFileRange(source, sink, cursor, range.start)
+            cursor = range.endExclusive
+        }
+        copyFileRange(source, sink, cursor, source.length())
+    }
+
+    private fun copyFileRange(source: RandomAccessFile, sink: OutputStream, start: Long, endExclusive: Long) {
+        if (endExclusive <= start) return
+        source.seek(start)
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var remaining = endExclusive - start
+        while (remaining > 0L) {
+            val read = source.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
+            if (read < 0) throw IOException("truncated JPEG while rewriting XMP")
+            sink.write(buffer, 0, read)
+            remaining -= read
+        }
+    }
+
     private fun validateJpeg(bytes: ByteArray) {
         require(bytes.size >= 4) { "JPEG is too short" }
         validateJpegPrefix(bytes.copyOfRange(0, 2))
@@ -165,6 +308,9 @@ object MotionPhotoAssembler {
         }
         return if (total == byteCount) prefix else prefix.copyOf(total)
     }
+
+    private data class ByteRange(val start: Long, val endExclusive: Long)
+    private data class JpegRewrite(val motionXmpRanges: List<ByteRange>)
 }
 
 object MotionTemporaryPolicy {

@@ -1,7 +1,7 @@
 # 拍照教练：技术架构
 
 - 状态：已按需求拍板，第一版采用方案 A
-- 更新日期：2026-08-30
+- 更新日期：2026-08-31
 - 产品依据：[requirement.md](requirement.md)
 
 本文只写怎么实现。产品范围、口令内容和验收以需求文档为准。
@@ -66,7 +66,7 @@ ExplainApi（C# / ASP.NET Core 10，可后做）
 ### 4.1 相机管线
 
 - CameraX 普通主路径：`Preview` + `ImageAnalysis` + `ImageCapture`
-- 显式 Live 且能力允许时：`Preview` + `ImageAnalysis` + `ImageCapture` + 无音轨 `VideoCapture<Recorder>`；Live 一律使用标准 Photo 选择器，不启用 Extensions。四用例或编码器绑定失败立即回普通三用例并向 UI 返回明确降级原因。
+- 显式 Live 且能力允许时：`Preview` + `ImageAnalysis` + `ImageCapture` + 无音轨 `VideoCapture<Recorder>`；Live 一律使用标准 Photo 选择器，不启用 Extensions。先用 `SessionConfig.Builder` 构造同一 ViewPort 的四用例组合，并以 `CameraInfo.isSessionConfigSupported` 预检；按 HD、SD 顺序尝试，实际绑定仍失败才回普通三用例并向 UI 返回明确降级原因。
 - `PreviewView` 使用 `FILL_CENTER` 覆盖长屏取景区；竖屏操作区叠在预览底部，避免 4:3 / 16:9 surface 居中产生额外黑带。三用例放入带 `PreviewView.viewPort` 的 `UseCaseGroup`，使预览可见裁切、ML Kit view-referenced 坐标和捕获裁切使用同一视口。
 - 分析策略：`STRATEGY_KEEP_ONLY_LATEST`，分析完必须 `ImageProxy.close()`
 - `Preview`、`ImageAnalysis`、`ImageCapture` 使用同一 4:3 或 16:9 `AspectRatioStrategy`；分析分辨率只作为性能偏好，不能用 UI 裁切伪造画幅。
@@ -77,15 +77,17 @@ ExplainApi（C# / ASP.NET Core 10，可后做）
 - 能力状态在每次镜头/画幅/模式重绑后重建：`ZoomState` 提供连续缩放范围，`ExposureState` 提供 EV 索引范围与步长，Extensions 双查询提供可选模式。旧设置越界时夹紧，旧模式不可用时回到“自动/普通”，不沿用陈旧能力。
 - 长按预览使用 `FocusMeteringAction` 的 AF+AE 且关闭自动取消；成功后显示锁定并提供显式 `cancelFocusAndMetering` 解除。任何 use case 重绑都会把 UI 锁定状态恢复为未锁，避免状态假死。
 - “对焦优先”映射 `CAPTURE_MODE_MAXIMIZE_QUALITY`，“拍摄优先”映射 `CAPTURE_MODE_MINIMIZE_LATENCY`；两者都不改变三用例同绑和手动快门优先。
+- `ImageCapture` 显式使用 `OUTPUT_FORMAT_JPEG`。当前 Live 封面只接受普通 SDR JPEG，不请求 `OUTPUT_FORMAT_JPEG_ULTRA_HDR`，避免 v1 两项 Container Directory 与 GainMap 条目冲突。
 - 倒计时只延迟一次用户发起的捕获，支持关闭/3 秒/10 秒；再次按屏幕或音量键快门取消，不进入自动连拍。
 - 这是第三方走厂商计算摄影的正路，对应需求「成片优先走系统计算摄影，口令分析不能停」
 
 ### 4.2 感知
 
-- ML Kit Face：小米 14 Pro 单人主路径使用精确模式、5% 最小脸尺寸偏好、关键点、睁眼/微笑分类与帧间 tracking；仍保留多人计数，用于「两张脸以上不要套单人剪影」。不同时启用 contour，避免实时管线负担失控。
+- ML Kit Face：小米 14 Pro 单人主路径使用精确模式、5% 最小脸尺寸偏好、睁眼分类与帧间 tracking；仍保留多人计数，用于「两张脸以上不要套单人剪影」。不同时启用 contour，避免实时管线负担失控。分类模式仍由 ML Kit 同时返回微笑概率，但业务层明确忽略该值，不从低微笑推断表情。
 - ML Kit Pose：单人骨骼
 - Face 与 Pose 独立生成可靠性：Face 未命中但 Pose 上半身可靠且未检测到多张脸时，允许保守单人姿势提示；两者都不可用时进入可恢复的“请露出脸，或靠近一点”状态，不得落入“可以拍了”。
-- 另算：水平倾角、脸占比、脸框横向是否居中、特写脸框是否明显落在下半部、脸/画面亮度、粗场景，以及一张脸时的左右转头、持续闭眼和低微笑概率。眼睛/微笑只在约 ±18° 正脸范围且分类值存在时使用，缺失时保持未知。
+- 另算：水平倾角、脸占比、脸框横向是否居中、特写脸框是否明显落在下半部、粗场景，以及一张脸时的左右转头和持续闭眼。每帧从 Y 平面按固定步长保留有上限的亮度网格，按 `rotationDegrees` 映射到 ML Kit 原始坐标；逆光只比较脸框中心采样与扩张脸框外背景采样，样本不足保持未知，不再根据脸框纵向位置猜亮度。
+- Pose 只输出有直接可见证据的上半身方向、耸肩和双手挡住身体等信号；单帧 2D 髋部/脚踝中心不再输出“重心均匀”，也不自动选择“重心换到后腿”。两张脸以上的规则路径只允许切边、水平和严重曝光提示。
 - 不做人脸比对，不存底库，不识别「这是谁」
 - 镜头检查只在连续多帧同时满足极暗、低方差时置位；单帧不触发，恢复也需连续清晰帧。该信号只能说明“可能遮挡或弄脏”，不能区分镜头盖、手指、暗室或污渍，文案必须保守。
 
@@ -122,7 +124,7 @@ ExplainApi（C# / ASP.NET Core 10，可后做）
 - `ParameterCoach` 输入端侧 `Signals` 与 EV 步长/范围、焦段标定、扩展模式、AE/AF 锁、倒计时、捕获偏好、连拍、构图/画幅和保存能力快照；按稳定优先级输出最多三项。控件动作使用类型安全的 `ParameterAction`，物理动作携带原因和动作正文；输出不包含 ISO、快门速度、WB 或开尔文值。
 - `CaptureIdentity` 生成不可复用 `captureId`，统一构造原片、Motion Photo、效果副本、连拍序号和配方名；显示名不依赖同毫秒唯一性。
 - `SaveCoordinator` 是可序列化的阶段状态机：SpaceCheck → Original/MotionPack → OriginalPublish → Recipe → OptionalDerivative → Complete/PartialFailure。每阶段有幂等 key，只重试失败阶段，原片成功后不回滚。
-- `MotionPhotoAssembler` 负责纯字节领域逻辑：验证 JPEG EOI 与 MP4、注入 Camera/Container XMP、计算 `Item:Length`、确保视频紧密位于文件末尾；`MotionClipWindow` 计算约 1.5 秒前后、总长约 3 秒的裁剪范围。
+- `MotionPhotoAssembler` 负责纯字节领域逻辑：验证 JPEG EOI 与 MP4、扫描 JPEG APP 段、只替换本 App 可识别的纯 Motion XMP、拒绝无法安全合并的第三方/混合 Motion XMP、普通/扩展 XMP 与 GainMap、写入 Camera/Container XMP、计算 `Item:Length` 并确保视频紧密位于文件末尾；`MotionClipWindow` 计算约 1.5 秒前后、总长约 3 秒的裁剪范围。
 
 图像与保存管线：
 
@@ -141,10 +143,10 @@ ExplainApi（C# / ASP.NET Core 10，可后做）
 
 Motion Photo 管线：
 
-1. Live 开关开启且四用例可绑定时，使用 `camera-video` 同版本的 `Recorder` 建立无音轨录制。录制文件、时长和大小均有硬上限；不开启音频，不请求 `RECORD_AUDIO`。
+1. Live 开关开启后先用标准后摄的 `SessionConfig` 查询四用例组合；候选按 HD、SD 排序，查询不支持则不绑定，查询异常时仍以实际绑定结果为准。成功后使用 `camera-video` 同版本的 `Recorder` 建立无音轨录制。录制文件、时长和大小均有硬上限；不开启音频，不请求 `RECORD_AUDIO`。
 2. 录制生命周期维护快门前缓存；快门后约 1.5 秒停止，并用平台媒体变换裁出总长约 3 秒的 MP4。`ImageCapture` 同时得到原始 JPEG 封面；指导和手动快门继续工作。
-3. `MotionPhotoAssembler` 向 JPEG APP1 注入官方 v1 XMP：`Camera:MotionPhoto=1`、`Camera:MotionPhotoVersion=1`、封面展示时间，以及 Primary/MotionPhoto 两项 Container Directory。之后原样追加 MP4，确保 `Item:Length` 等于真实视频字节数且没有尾随字节。
-4. 只发布一个符合 `^([^\\s/\\\\][^/\\\\]*MP)\\.(JPG|jpg|JPEG|jpeg)$` 的 MediaStore JPEG；容器主 JPEG 即原片，不再另存重复静态原片。Live 选择强制普通 Photo，Extensions 不参与四用例绑定。
+3. `MotionPhotoAssembler` 先扫描 JPEG APP 段。没有 XMP 时新增官方 v1 XMP；旧包与本 App 生成的纯 Motion 包一致时删除旧段并只写一份新段；发现第三方/混合 Motion XMP、非 Motion/扩展 XMP 或 GainMap 时抛出可恢复错误，由保存状态机发布未改写的普通 JPEG。成功路径写入 `Camera:MotionPhoto=1`、`Camera:MotionPhotoVersion=1`、封面展示时间和 Primary/MotionPhoto 两项 Container Directory，再追加 MP4，确保 `Item:Length` 等于真实视频字节数且没有尾随字节。
+4. 只发布一个符合 `^([^\\s/\\\\][^/\\\\]*MP)\\.(JPG|jpg|JPEG|jpeg)$` 的 MediaStore JPEG；容器主 JPEG 即 SDR 原片，不再另存重复静态原片。Live 选择强制普通 Photo 和 `OUTPUT_FORMAT_JPEG`，Extensions 与 Ultra HDR 不参与四用例绑定。
 5. 录制、裁剪、XMP、空间或发布失败均进入普通 JPEG fallback 阶段；状态机保证最终至多一个主文件。滤镜只生成可选静态兼容 SDR 副本，主 Motion Photo 保持原始封面颜色。
 6. 进程恢复根据 journal 和 MediaStore URI 幂等完成或回退；清理所有临时 MP4/JPEG、超限录制和 pending 行。是否被 HyperOS 相册识别、播放、保留广色域或 Ultra HDR 均为真机 `NotRun`。
 
@@ -179,7 +181,7 @@ iOS 成片走系统 Photo 管线，对应 Android 的 CameraX Extensions。合�
 - 第一版不上登录、EF、ABP、手机端大模型
 - 第一版只验收小米 14 Pro 竖屏和横屏；其他机型后期单独立项
 
-当前自动化环境未连接小米 14 Pro。CameraX/Camera2 能力枚举、回退策略和设置恢复可由 JVM 单测覆盖，但快捷焦段/EXIF、真实 Zoom/EV 范围、Extensions 三用例组合、AE/AF 3A 行为、画幅成片、音量键倒计时、连续 100 张保存、遮挡/污渍误报率、十二种风格与七项编辑真实颜色、三张连拍间隔/热量/推荐有效性、HyperOS MediaStore 分阶段保存/收藏/回收站、广色域/Ultra HDR，以及 Live 四用例绑定、编码、裁剪和 Motion Photo 播放均为 **NotRun**，不得据此宣称 HyperOS 真机通过。
+本地门禁依次为 `.\gradlew.bat :coach:test` 与 `.\gradlew.bat :androidApp:testDebugUnitTest`。当前自动化环境未连接小米 14 Pro；CameraX/Camera2 能力枚举、回退策略和设置恢复可由 JVM 单测覆盖，但快捷焦段/EXIF、真实 Zoom/EV 范围、Extensions 三用例组合、AE/AF 3A 行为、画幅成片、音量键倒计时、连续 100 张保存、遮挡/污渍误报率、十二种风格与七项编辑真实颜色、三张连拍间隔/热量/推荐有效性、HyperOS MediaStore 分阶段保存/收藏/回收站、广色域/Ultra HDR，以及 Live 四用例绑定、编码、裁剪和 Motion Photo 播放均为 **NotRun**，不得据此宣称 HyperOS 真机通过。
 
 ---
 

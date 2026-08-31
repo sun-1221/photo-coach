@@ -7,7 +7,10 @@ object CueSelector {
     const val SCENERY_MIN_FACE_RATIO = 0.05f
     const val TILT_THRESHOLD = 3f
 
-    private val bannedTerms = listOf("光圈", "ISO", "iso", "f/", "开尔文", "评分", "百分比")
+    private val bannedTerms = listOf(
+        "光圈", "ISO", "iso", "f/", "开尔文", "评分", "百分比",
+        "微笑", "胖", "瘦", "体重", "重心",
+    )
 
     fun select(
         catalog: SceneCatalog,
@@ -18,7 +21,7 @@ object CueSelector {
         if (signals.lensObscured) {
             return listOfNotNull(sanitize(catalog.cue(CueId.CLEAN_LENS), emptyList()))
         }
-        if (signals.faceCount > 1) return emptyList()
+        if (signals.faceCount > 1) return pickSafeMultiPersonCues(catalog, signals)
         if (signals.faceCount == 0) {
             if (!signals.poseAvailable) {
                 return listOfNotNull(sanitize(catalog.cue(CueId.FIND_PERSON), emptyList()))
@@ -75,15 +78,25 @@ object CueSelector {
         return when {
             signals.faceTurnedAway -> catalog.cue(CueId.TURN_FACE_TO_CAMERA)
             signals.eyesLikelyClosed -> catalog.cue(CueId.OPEN_EYES)
-            signals.expressionNeedsRelaxing -> catalog.cue(CueId.RELAX_EXPRESSION)
             !signals.poseAvailable -> null
             signals.headTiltedBack -> catalog.cue(CueId.CHIN_DOWN)
             signals.shouldersSquare -> sceneAngleCue(scene) ?: catalog.cue(CueId.ANGLE_BODY)
-            signals.weightEven -> catalog.cue(CueId.WEIGHT_BACK)
             signals.shouldersRaised -> catalog.cue(CueId.RELAX_SHOULDERS)
             signals.handsIdle -> catalog.cue(CueId.REST_HANDS)
             else -> null
         }
+    }
+
+    private fun pickSafeMultiPersonCues(catalog: SceneCatalog, signals: Signals): List<Cue> {
+        val cues = listOfNotNull(
+            when {
+                signals.subjectCutOff -> catalog.cue(CueId.KEEP_SUBJECT_IN_FRAME)
+                abs(signals.tiltDegrees) > TILT_THRESHOLD -> catalog.cue(CueId.LEVEL_PHONE)
+                else -> null
+            },
+            if (signals.skyOverexposed) catalog.cue(CueId.LOWER_EXPOSURE) else null,
+        )
+        return cues.mapNotNull { sanitize(it, emptyList()) }.distinctBy(Cue::channel).take(2)
     }
 
     private fun sceneAngleCue(scene: SceneDefinition?): Cue? = scene?.subjectCues?.firstOrNull {

@@ -65,7 +65,7 @@ class CoachAnalyzer(
 
     override fun analyze(image: ImageProxy) {
         try {
-            val stats = FrameStats.compute(image)
+            val stats = FrameStats.compute(image, image.imageInfo.rotationDegrees)
             val (width, height) = rotatedAnalysisDimensions(
                 image.width,
                 image.height,

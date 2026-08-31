@@ -85,6 +85,27 @@ class CoachRulesTest {
     }
 
     @Test
+    fun multipleFacesKeepOnlySafeFramingAndExposureCues() {
+        val output = engine.evaluate(
+            Signals(
+                faceCount = 2,
+                poseAvailable = true,
+                shouldersSquare = true,
+                subjectCutOff = true,
+                skyOverexposed = true,
+            ),
+            ShotIntent.CLOSE_UP,
+        )
+
+        assertEquals(
+            setOf(CueId.KEEP_SUBJECT_IN_FRAME, CueId.LOWER_EXPOSURE),
+            output.cues.map(Cue::id).toSet(),
+        )
+        assertFalse(output.cues.any { it.channel == Channel.POSE })
+        assertFalse(output.overlay.showSilhouette)
+    }
+
+    @Test
     fun faceAndPoseMissProduceVisibleRecoveryInsteadOfReady() {
         val output = engine.evaluate(Signals(faceCount = 0, poseAvailable = false), ShotIntent.CLOSE_UP)
 
@@ -159,17 +180,13 @@ class CoachRulesTest {
     }
 
     @Test
-    fun faceDetailsProduceConservativeSubjectCuesWithoutRequiringPose() {
+    fun faceDetailsProduceOnlyObservedSubjectCuesWithoutRequiringPose() {
         val turned = engine.evaluate(
             Signals(faceCount = 1, faceRatio = 0.16f, faceTurnedAway = true),
             ShotIntent.CLOSE_UP,
         )
         val blink = engine.evaluate(
             Signals(faceCount = 1, faceRatio = 0.16f, eyesLikelyClosed = true),
-            ShotIntent.CLOSE_UP,
-        )
-        val expression = engine.evaluate(
-            Signals(faceCount = 1, faceRatio = 0.16f, expressionNeedsRelaxing = true),
             ShotIntent.CLOSE_UP,
         )
         val uncertain = engine.evaluate(
@@ -179,7 +196,36 @@ class CoachRulesTest {
 
         assertEquals(CueId.TURN_FACE_TO_CAMERA, turned.cues.single { it.channel == Channel.POSE }.id)
         assertEquals(CueId.OPEN_EYES, blink.cues.single { it.channel == Channel.POSE }.id)
-        assertEquals(CueId.RELAX_EXPRESSION, expression.cues.single { it.channel == Channel.POSE }.id)
         assertFalse(uncertain.cues.any { it.channel == Channel.POSE })
+    }
+
+    @Test
+    fun unreliableExpressionAndBodyJudgementLanguageIsRejectedAtTheCatalogBoundary() {
+        val defaultCatalog = ScenesLoader.loadFromClasspath()
+        val unsafeTexts = listOf(
+            "微笑一点",
+            "这样显得更瘦",
+            "把体重移到后面",
+            "重心换到后腿",
+        )
+
+        unsafeTexts.forEach { unsafeText ->
+            val catalog = defaultCatalog.copy(
+                coreCues = defaultCatalog.coreCues.map { cue ->
+                    if (cue.id == CueId.ANGLE_BODY) cue.copy(text = unsafeText) else cue
+                },
+            )
+            val output = CoachEngine(catalog).evaluate(
+                Signals(
+                    faceCount = 1,
+                    faceRatio = 0.16f,
+                    poseAvailable = true,
+                    shouldersSquare = true,
+                ),
+                ShotIntent.CLOSE_UP,
+            )
+
+            assertFalse(output.cues.any { it.text == unsafeText }, unsafeText)
+        }
     }
 }
