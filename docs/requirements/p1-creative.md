@@ -83,7 +83,7 @@ P1 不因“已经写进规则库”自动进入排期，必须有 P0 数据支�
 - 这是 Android 官方 Motion Photo Format 1.0，不命名或冒充 Apple Live Photo。Live 为显式开关，默认无声；绝不新增 `RECORD_AUDIO` 权限或音轨。
 - 能力允许时绑定 `Preview + ImageAnalysis + ImageCapture + VideoCapture`，继续实时指导和手动快门。绑定前用 CameraX `SessionConfig` 做组合能力预检，优先 HD、不可用时再试 SD；实际绑定仍失败则回退三用例。Live 模式必须使用普通 Photo，禁止 CameraX Extensions；任何失败都显示原因并回退普通照片，不能保留假 Live 状态。
 - 开关启用后维护有严格大小和时长上限的循环临时无声 MP4。按快门时以 CameraX 原始 JPEG 为高分辨率封面，保留快门前后各约 1.5 秒并裁剪为约 3 秒。
-- Motion Photo 封面显式使用普通 SDR JPEG，不请求 Ultra HDR。主文件按照官方 v1：向原始 JPEG 写入 `Camera:MotionPhoto=1`、版本和封面时间戳，以及有且仅有 Primary/MotionPhoto 两项的 Container XMP；仅当旧包与本 App 生成的纯 Motion 包一致时整段替换，保证重复调用仍只有一份。若封面含第三方/混合元数据的 Motion XMP、非 Motion XMP、扩展 XMP 或 GainMap，当前版本不得丢弃或盲合并，须回退发布原始普通 JPEG。随后紧密追加 MP4，视频位于文件末尾，显示名符合 `…MP.JPG`。
+- Motion Photo 封面显式使用普通 SDR JPEG，不请求 Ultra HDR。主文件按照官方 v1 和小米 14 Pro 原生样本：向原始 JPEG 写入 `GCamera:MotionPhoto=1`、版本和封面时间戳，在每个 `rdf:li` 中嵌套一个 `Container:Item`，目录有且仅有 Primary/MotionPhoto 两项，MotionPhoto 项写入真实 Length 与 `Padding=0`；仅当旧包与本 App 生成的纯 Motion 包一致时整段替换，保证重复调用仍只有一份。若封面含第三方/混合元数据的 Motion XMP、非 Motion XMP、扩展 XMP 或 GainMap，当前版本不得丢弃或盲合并，须回退发布原始普通 JPEG。随后紧密追加 MP4，视频位于文件末尾，显示名以 `MVIMG_` 开头且符合 `…MP.JPG` 后缀。
 - 打包、XMP、裁剪或发布任一阶段失败时，清除不完整容器和 pending 行，并可靠发布原始普通 JPEG；恢复记录保证进程重启不重复发布。所有成功、失败、取消和恢复路径都清理超时/超量临时视频。
 - Live 主文件保持原始封面颜色；风格和编辑只生成可选静态兼容 SDR 派生副本，避免封面与视频颜色不一致。未在小米 14 Pro 相册验证前不得宣称系统可播放、Ultra HDR 保留或 Live 已验收。
 

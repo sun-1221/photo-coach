@@ -82,3 +82,15 @@ Gradle 输出显示任务为 UP-TO-DATE 仍代表本次门禁命令成功；它�
 | `.\gradlew.bat :androidApp:testDebugUnitTest --rerun-tasks` | Pass（110 tests，0 failed / 0 skipped） |
 
 已覆盖姿势证据计时与换姿势重置、背景细节与手持稳定信号、风格分组与拍前强度、热状态 ML 降级与拍摄中延迟重绑、原片/效果副本分域校验及旧日志兼容。Android instrumented、小米 14 Pro / HyperOS 真机、连续 100 张与保存阶段杀进程矩阵仍为 NotRun。
+
+## 8. 2026-09-01 Ready 与 Motion Photo 修复验证
+
+| 检查 | 结果 |
+| --- | --- |
+| `.\\gradlew.bat :coach:test` | Pass（55 tests） |
+| `.\\gradlew.bat :androidApp:testDebugUnitTest :androidApp:assembleDebug` | Pass（110 tests；Debug APK 生成成功） |
+| Ready 回归 | Pass：无可靠人物超时保持恢复口令；Pose-only 问题消失后回找人；未达最低条件只标“随时可拍”；快门仍可用 |
+| 小米原生 Motion Photo 样本 | 已读取目标机 `MVIMG_20260829_114022.jpg`；确认 `GCamera`、嵌套 `Container:Item`、真实 Length 与 `Padding=0` |
+| 修复后真机安装与拍摄 | NotRun：ADB daemon 重启后设备掉线，`adb devices -l` 无目标机；APK 未安装 |
+
+修复前目标机证据仍保留为 Fail：原 App Motion Photo 在 HyperOS 相册中只显示静态照片，且前九张存在明显 false Ready。该失败不能被本轮 JVM Pass 覆盖；必须在同一台小米 14 Pro 重新连接后完成安装、遮脸/无人画面、Live 拍摄、MediaStore 校验和相册播放回归。

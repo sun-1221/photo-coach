@@ -265,19 +265,18 @@ P1 和明确不做项见[P1 创意层与决策边界](requirements/p1-creative.m
 | [分阶段验收](acceptance/acceptance-plan.md) | UX 唯一定义、目标机矩阵、质量门槛 | P-1 与已批准 P1 独立；P0 缺口显式 |
 | [需求追踪矩阵](traceability/requirements-matrix.md) | FR 唯一定义、Phase、UX、组件、自动化/真机证据和状态 | 分列 Scope/Delivery/Verification |
 | [市场、交互与官方依据](research/evidence.md) | 证据分级、竞品、官方依据、边界与市场风险 | Research only，不把依据写成验证通过 |
-| [决策与冲突登记](traceability/decisions-and-conflicts.md) | 未决冲突双方及控制 | 全部 ConflictPending，待用户拍板 |
+| [决策与冲突登记](traceability/decisions-and-conflicts.md) | 未决冲突双方、控制与已决历史 | 未决项保持 ConflictPending；已决项保留历史双方与决议 |
 | [迁移登记](traceability/migration-register.md) | 旧章节/表格/规则/技术决定到新位置 | 只使用允许的迁移状态 |
 | [验证报告](traceability/validation-report.md) | 快照、链接、编号、阶段、自动化、Git 范围与残余 NotRun | 自动化与设备证据分开 |
 
 ## 12. 当前 ConflictPending
 
 - CP-01：竖屏底部操作区约五分之一与 UX-15 约四分之一的口径冲突。
-- CP-02：UX-06 低置信度“可以拍了”与 UX-31 Face/Pose 不可靠时“请露出脸”的边界冲突。
 - CP-03：全局“一次一件事”与 P1 最多同时三张参数建议卡的关系未定。
 - CP-04：短口令核 12–16 条与旧架构 8–12 条不一致。
 - CP-05：仅承诺小米 14 Pro 与 UX-30 非目标设备“可用”措辞的范围边界未定。
 
-完整双方、影响和待决问题见[决策与冲突登记](traceability/decisions-and-conflicts.md)。本入口不裁决以上事项。
+CP-02 已于 2026-09-01 按用户要求解决：可靠识别人但未达到最低可拍条件时使用“随时可拍”，未可靠识别人时使用恢复口令，只有最低条件成立才使用“可以拍了”。完整历史双方、决议、影响和其余待决问题见[决策与冲突登记](traceability/decisions-and-conflicts.md)。本入口不裁决仍处于 ConflictPending 的事项。
 
 ## 13. 文档维护
 

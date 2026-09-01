@@ -44,7 +44,7 @@ Motion Photo 管线：
 
 1. Live 开关开启后先用标准后摄的 `SessionConfig` 查询四用例组合；候选按 HD、SD 排序，查询不支持则不绑定，查询异常时仍以实际绑定结果为准。成功后使用 `camera-video` 同版本的 `Recorder` 建立无音轨录制。录制文件、时长和大小均有硬上限；不开启音频，不请求 `RECORD_AUDIO`。
 2. 录制生命周期维护快门前缓存；快门后约 1.5 秒停止，并用平台媒体变换裁出总长约 3 秒的 MP4。`ImageCapture` 同时得到原始 JPEG 封面；指导和手动快门继续工作。
-3. `MotionPhotoAssembler` 先扫描 JPEG APP 段。没有 XMP 时新增官方 v1 XMP；旧包与本 App 生成的纯 Motion 包一致时删除旧段并只写一份新段；发现第三方/混合 Motion XMP、非 Motion/扩展 XMP 或 GainMap 时抛出可恢复错误，由保存状态机发布未改写的普通 JPEG。成功路径写入 `Camera:MotionPhoto=1`、`Camera:MotionPhotoVersion=1`、封面展示时间和 Primary/MotionPhoto 两项 Container Directory，再追加 MP4，确保 `Item:Length` 等于真实视频字节数且没有尾随字节。
-4. 只发布一个符合 `^([^\\s/\\\\][^/\\\\]*MP)\\.(JPG|jpg|JPEG|jpeg)$` 的 MediaStore JPEG；容器主 JPEG 即 SDR 原片，不再另存重复静态原片。Live 选择强制普通 Photo 和 `OUTPUT_FORMAT_JPEG`，Extensions 与 Ultra HDR 不参与四用例绑定。
+3. `MotionPhotoAssembler` 先扫描 JPEG APP 段。没有 XMP 时新增官方 v1 XMP；旧包与本 App 生成的纯 Motion 包一致时删除旧段并只写一份新段；发现第三方/混合 Motion XMP、非 Motion/扩展 XMP 或 GainMap 时抛出可恢复错误，由保存状态机发布未改写的普通 JPEG。成功路径对齐小米 14 Pro 原生 `MVIMG` 样本：写入 `GCamera:MotionPhoto=1`、`GCamera:MotionPhotoVersion=1`、封面展示时间，在两个 `rdf:li` 中分别嵌套 Primary/MotionPhoto `Container:Item`，MotionPhoto 项包含真实 `Item:Length` 与 `Item:Padding=0`；再追加 MP4，确保没有尾随字节。
+4. 只发布一个以 `MVIMG_` 开头且符合 `^([^\\s/\\\\][^/\\\\]*MP)\\.(JPG|jpg|JPEG|jpeg)$` 的 MediaStore JPEG；容器主 JPEG 即 SDR 原片，不再另存重复静态原片。Live 选择强制普通 Photo 和 `OUTPUT_FORMAT_JPEG`，Extensions 与 Ultra HDR 不参与四用例绑定。
 5. 录制、裁剪、XMP、空间或发布失败均进入普通 JPEG fallback 阶段；状态机保证最终至多一个主文件。滤镜只生成可选静态兼容 SDR 副本，主 Motion Photo 保持原始封面颜色。
 6. 进程恢复根据 journal 和 MediaStore URI 幂等完成或回退；清理所有临时 MP4/JPEG、超限录制和 pending 行。是否被 HyperOS 相册识别、播放、保留广色域或 Ultra HDR 均为真机 `NotRun`。

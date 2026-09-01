@@ -100,7 +100,7 @@ A. 盘点并保存版本化历史正文；B. 研究依据；C. 产品规格与�
 | ID | 旧内容来源 | Status | 保留位置 |
 | --- | --- | --- | --- |
 | CP-01 | requirement 5.4 与 UX-15 | ConflictPending | [冲突登记](decisions-and-conflicts.md) |
-| CP-02 | UX-06 与 UX-31，以及状态规则 | ConflictPending | [冲突登记](decisions-and-conflicts.md) |
+| CP-02 | UX-06 与 UX-31，以及状态规则 | Consolidated | [冲突登记的 2026-09-01 决议](decisions-and-conflicts.md) |
 | CP-03 | requirement 1.3/5.4 的一次一件事与 12.2/UX-33 的三张参数卡 | ConflictPending | [冲突登记](decisions-and-conflicts.md) |
 | CP-04 | requirement 11.5 的 12–16 与 architecture 4 的 8–12 | ConflictPending | [冲突登记](decisions-and-conflicts.md) |
 | CP-05 | 仅小米 14 Pro 承诺与 UX-30 非目标设备可用措辞 | ConflictPending | [冲突登记](decisions-and-conflicts.md) |
