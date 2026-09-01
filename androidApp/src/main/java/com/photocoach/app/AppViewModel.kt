@@ -225,6 +225,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var captureStyle = CreativeStyle.ORIGINAL
     private var activeCaptureId: CaptureId? = null
     private var captureTakenAtMillis: Long = 0L
+    private var captureLiveRequested = false
     private val capturedPhotos = mutableListOf<CreativePhotoUi>()
     private var editHistory = EditHistory()
     private val analyzedFrames = MutableSharedFlow<AnalyzedFrame>(
@@ -861,6 +862,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             captureStyle = _ui.value.creativeStyle
             activeCaptureId = CaptureIdentity.create()
             captureTakenAtMillis = System.currentTimeMillis()
+            captureLiveRequested = _ui.value.livePhotoEnabled && thermalPolicy.allowNewLive
             capturedPhotos.clear()
             editHistory = EditHistory()
             burstSession.reset()
@@ -909,7 +911,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             edit = EditAdjustment(styleStrength = state.creativeStyleStrength),
             saveStrategy = state.saveStrategy,
             derivativeQuality = state.derivativeQuality,
-            livePhotoRequested = state.livePhotoEnabled && ThermalPolicy.forLevel(state.thermalLevel).allowNewLive,
+            livePhotoRequested = captureLiveRequested,
             portraitRegion = portraitRegion,
         )
     }
@@ -952,13 +954,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             .filterNot { it.id == recommendedId }
             .maxByOrNull { it.score.total }
         val reason = recommended.score.reasonComparedWith(runnerUp?.score)
+        val liveRequested = captureLiveRequested
+        val saveOutcomeText = when {
+            recommended.isMotionPhoto -> "Live 已保存到系统相册"
+            liveRequested -> "Live 未生成，普通照片已保存"
+            else -> null
+        }
         guidance.onSaved(recommended.displayUri, now())
         _ui.update {
             it.copy(
                 guidance = guidance.snapshot(),
                 recentPhoto = recommended.displayUri,
                 burstProgress = null,
-                saveStatusText = null,
+                saveStatusText = saveOutcomeText,
                 savePartialSuccess = false,
                 creativeResult = CreativeResultUi(
                     photos = capturedPhotos.toList(),
@@ -977,7 +985,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 creativeResultVisible = false,
             )
         }
-        recordEvent("save", if (captureExpectedCount == 3) "burst_complete" else "success")
+        val saveEvent = when {
+            captureExpectedCount == 3 -> "burst_complete"
+            recommended.isMotionPhoto -> "live_success"
+            liveRequested -> "jpeg_fallback"
+            else -> "success"
+        }
+        recordEvent("save", saveEvent)
         return false
     }
 

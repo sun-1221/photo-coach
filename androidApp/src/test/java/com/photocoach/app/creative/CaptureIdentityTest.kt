@@ -26,6 +26,7 @@ class CaptureIdentityTest {
     @Test
     fun `motion photo filename follows official MP suffix pattern`() {
         val name = CaptureIdentity.motionPhotoDisplayName(id, 3, 1_700_000_000_000L)
+        assertTrue(name.startsWith("MVIMG_"))
         assertTrue(name.contains("_S03MP.JPG"))
         assertTrue(CaptureIdentity.motionPhotoNamePattern.matches(name))
     }

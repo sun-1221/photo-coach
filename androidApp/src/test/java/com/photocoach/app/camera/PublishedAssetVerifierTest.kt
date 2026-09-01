@@ -21,6 +21,7 @@ class PublishedAssetVerifierTest {
 
     @Test fun `motion directory requires one primary one motion and real length`() {
         val valid = """
+            GCamera:MotionPhoto="1"
             Item:Semantic="Primary"
             Item:Semantic="MotionPhoto" Item:Length="120"
         """.trimIndent().toByteArray()
@@ -30,7 +31,7 @@ class PublishedAssetVerifierTest {
         }
         assertThrows(IllegalArgumentException::class.java) {
             AssetIntegrityValidator.validateMotionHeader(
-                "Item:Semantic=\"Primary\" Item:Semantic=\"MotionPhoto\" Item:Length=\"9999\"".toByteArray(),
+                "GCamera:MotionPhoto=\"1\" Item:Semantic=\"Primary\" Item:Semantic=\"MotionPhoto\" Item:Length=\"9999\"".toByteArray(),
                 1_000,
             )
         }

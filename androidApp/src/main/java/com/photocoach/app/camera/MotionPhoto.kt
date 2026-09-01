@@ -125,27 +125,28 @@ object MotionPhotoAssembler {
     fun xmpPacket(videoLength: Long, presentationTimestampUs: Long): String {
         require(videoLength > 0L)
         require(presentationTimestampUs >= -1L)
-        val byteOrderMark = 0xfeff.toChar()
-        return """<?xpacket begin="$byteOrderMark" id="W5M0MpCehiHzreSzNTczkc9d"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/">
+        return """<x:xmpmeta xmlns:x="adobe:ns:meta/">
   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
     <rdf:Description rdf:about=""
-      xmlns:Camera="http://ns.google.com/photos/1.0/camera/"
+      xmlns:GCamera="http://ns.google.com/photos/1.0/camera/"
       xmlns:Container="http://ns.google.com/photos/1.0/container/"
       xmlns:Item="http://ns.google.com/photos/1.0/container/item/"
-      Camera:MotionPhoto="1"
-      Camera:MotionPhotoVersion="1"
-      Camera:MotionPhotoPresentationTimestampUs="$presentationTimestampUs">
+      GCamera:MotionPhoto="1"
+      GCamera:MotionPhotoVersion="1"
+      GCamera:MotionPhotoPresentationTimestampUs="$presentationTimestampUs">
       <Container:Directory>
         <rdf:Seq>
-          <rdf:li rdf:parseType="Resource" Item:Mime="image/jpeg" Item:Semantic="Primary"/>
-          <rdf:li rdf:parseType="Resource" Item:Mime="video/mp4" Item:Semantic="MotionPhoto" Item:Length="$videoLength"/>
+          <rdf:li rdf:parseType="Resource">
+            <Container:Item Item:Mime="image/jpeg" Item:Semantic="Primary"/>
+          </rdf:li>
+          <rdf:li rdf:parseType="Resource">
+            <Container:Item Item:Mime="video/mp4" Item:Semantic="MotionPhoto" Item:Length="$videoLength" Item:Padding="0"/>
+          </rdf:li>
         </rdf:Seq>
       </Container:Directory>
     </rdf:Description>
   </rdf:RDF>
-</x:xmpmeta>
-<?xpacket end="w"?>"""
+</x:xmpmeta>"""
     }
 
     private fun app1Segment(videoLength: Long, presentationTimestampUs: Long): ByteArray {
@@ -213,7 +214,9 @@ object MotionPhotoAssembler {
             payload.toString(StandardCharsets.US_ASCII).startsWith("http://ns.adobe.com/xmp/extension/")
 
     private fun isMotionPhotoXmp(xmp: String): Boolean =
-        xmp.contains("Camera:MotionPhoto=") || xmp.contains("GCamera:MicroVideo=")
+        xmp.contains("Camera:MotionPhoto=") ||
+            xmp.contains("GCamera:MotionPhoto=") ||
+            xmp.contains("GCamera:MicroVideo=")
 
     private fun isReplaceableMotionPhotoXmp(xmp: String): Boolean {
         val expected = XMP_HEADER.toString(StandardCharsets.UTF_8) + xmpPacket(1L, -1L)
@@ -222,8 +225,8 @@ object MotionPhotoAssembler {
 
     private fun normalizeOwnedMotionXmp(xmp: String): String = xmp
         .replace(
-            Regex("""Camera:MotionPhotoPresentationTimestampUs="-?\d+""""),
-            """Camera:MotionPhotoPresentationTimestampUs="{timestamp}"""",
+            Regex("""GCamera:MotionPhotoPresentationTimestampUs="-?\d+""""),
+            """GCamera:MotionPhotoPresentationTimestampUs="{timestamp}"""",
         )
         .replace(
             Regex("""Item:Length="\d+""""),

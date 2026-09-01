@@ -44,7 +44,7 @@ object CaptureIdentity {
     ): String {
         require(sequence in 1..99)
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date(takenAtMillis))
-        return "IMG_${stamp}_${captureId.value}_S${sequence.toString().padStart(2, '0')}MP.JPG"
+        return "MVIMG_${stamp}_${captureId.value}_S${sequence.toString().padStart(2, '0')}MP.JPG"
     }
 
     fun recipeFileName(captureId: CaptureId, sequence: Int = 1): String {

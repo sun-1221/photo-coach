@@ -16,14 +16,17 @@ class MotionPhotoTest {
     @TempDir
     lateinit var temporaryDirectory: Path
     @Test
-    fun `v1 xmp declares camera and exactly one primary plus terminal motion item`() {
+    fun `v1 xmp matches Xiaomi native directory shape`() {
         val xmp = MotionPhotoAssembler.xmpPacket(videoLength = 12_345, presentationTimestampUs = 1_500_000)
-        assertTrue(xmp.contains("Camera:MotionPhoto=\"1\""))
-        assertTrue(xmp.contains("Camera:MotionPhotoVersion=\"1\""))
-        assertTrue(xmp.contains("Camera:MotionPhotoPresentationTimestampUs=\"1500000\""))
+        assertTrue(xmp.contains("xmlns:GCamera=\"http://ns.google.com/photos/1.0/camera/\""))
+        assertTrue(xmp.contains("GCamera:MotionPhoto=\"1\""))
+        assertTrue(xmp.contains("GCamera:MotionPhotoVersion=\"1\""))
+        assertTrue(xmp.contains("GCamera:MotionPhotoPresentationTimestampUs=\"1500000\""))
+        assertEquals(2, Regex("<Container:Item ").findAll(xmp).count())
         assertEquals(1, Regex("Item:Semantic=\"Primary\"").findAll(xmp).count())
         assertEquals(1, Regex("Item:Semantic=\"MotionPhoto\"").findAll(xmp).count())
         assertTrue(xmp.contains("Item:Length=\"12345\""))
+        assertTrue(xmp.contains("Item:Padding=\"0\""))
     }
 
     @Test
@@ -50,7 +53,7 @@ class MotionPhotoTest {
         val output = MotionPhotoAssembler.assemble(jpegWithMotionXmp, secondMp4, 1_500_000)
         val text = output.toString(StandardCharsets.ISO_8859_1)
 
-        assertEquals(1, Regex("Camera:MotionPhoto=\\\"").findAll(text).count())
+        assertEquals(1, Regex("GCamera:MotionPhoto=\\\"").findAll(text).count())
         assertArrayEquals(secondMp4, output.copyOfRange(output.size - secondMp4.size, output.size))
     }
 

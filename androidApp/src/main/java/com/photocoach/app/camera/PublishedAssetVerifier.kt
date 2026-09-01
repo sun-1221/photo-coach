@@ -38,6 +38,10 @@ object AssetIntegrityValidator {
 
     fun validateMotionHeader(header: ByteArray, totalLength: Long) {
         val text = header.toString(StandardCharsets.UTF_8)
+        require(
+            text.contains("GCamera:MotionPhoto=\"1\"") ||
+                text.contains("Camera:MotionPhoto=\"1\""),
+        ) { "Motion Photo flag is missing" }
         require(Regex("Item:Semantic=\\\"Primary\\\"").findAll(text).count() == 1) { "Motion Photo must contain one Primary item" }
         require(Regex("Item:Semantic=\\\"MotionPhoto\\\"").findAll(text).count() == 1) { "Motion Photo must contain one MotionPhoto item" }
         val videoLength = Regex("Item:Length=\\\"(\\d+)\\\"").find(text)?.groupValues?.get(1)?.toLongOrNull()
