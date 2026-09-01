@@ -1,6 +1,7 @@
 package com.photocoach.app
 
 import android.Manifest
+import android.content.pm.PackageManager
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -24,10 +25,12 @@ class ViewfinderActivityTest {
 
     @Test
     fun manualZoomRespectsTheBoundCameraCapability() {
-        InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(
-            compose.activity.packageName,
-            Manifest.permission.CAMERA,
-        )
+        if (compose.activity.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(
+                compose.activity.packageName,
+                Manifest.permission.CAMERA,
+            )
+        }
         if (compose.onAllNodesWithText("同意并继续").fetchSemanticsNodes().isNotEmpty()) {
             compose.onNodeWithText("同意并继续").performClick()
         }
