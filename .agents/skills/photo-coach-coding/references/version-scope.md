@@ -1,47 +1,47 @@
-# 版本范围与文件边界
+# 版本范围、状态与文件边界
 
-新增能力、页面、权限、网络、场景、目标设备，或做范围合规检查时读本文件。最终以 `docs/requirement.md` 当前内容为准，本文件只把版本矩阵变成编码决策。
+新增能力、页面、权限、网络、场景、目标设备、平台，或做范围合规检查时读本文件。本文件提供判断流程，不复制版本范围、FR 或 UX 定义。
 
-## 当前版本门禁
+## 判断流程
 
-| 层级 | 可以实施 | 不得混入 |
+1. 先读 `docs/requirement.md`，再读 `docs/architecture.md`。
+2. 读 `docs/traceability/requirements-matrix.md`，以对应 FR 的 `Phase` 与 `Scope` 判断 `InScope`、`GateLocked`、`ApprovedSeparate` 或 `Deferred`；不要从代码路径或测试名推断范围。
+3. 按任务读取产品细则：交互/指导/场景读 `docs/requirements/interaction-guidance-and-scenarios.md`，P1 创意读 `docs/requirements/p1-creative.md`，合影/角色切换/后期读 `docs/requirements/deferred-scope.md`。
+4. 读取相应架构专题；涉及平台取舍、技术选择或历史技术决定时读 `docs/architecture/decisions.md`。
+5. 命中 `CP-*`、两个规范给出不同口径或无法唯一解释时，读 `docs/traceability/decisions-and-conflicts.md`。保持 `ConflictPending` 并请求用户决定，不能用实现、测试或“更严格”解释代替拍板。
+
+用户直接要求一个仍受门禁或后期约束的能力时，报告对应 `Scope` 和缺失前提；只有用户做出明确范围决策后才扩大实现。
+
+## 三个独立维度
+
+| 维度 | 只回答 | 不得推断 |
 | --- | --- | --- |
-| P-1 验证包 | 小米 14 Pro 后摄、一张脸；人物特写/人带景；室内窗边、室外人带景、逆光；端侧两步指导；手动快门；真实保存；非图像研究事件 | 前摄、只拍景、建筑/街拍、代拍、云端讲解、评分、自动拍、登录、收费、姿势商城 |
-| 完整 P0 | 仅在需求第 3.3 节全部门槛通过后，增加前摄/只拍景、P0 场景、单人叠线、代拍简化页、按需“再讲细” | 其他 Android 兼容承诺、合影、角色切换、评分或默认自动拍 |
-| 已批准 P1 创意层 | 小米 14 Pro 参数建议、十二种参数化风格、明确开启的三张连拍、本地确定性选优、七项非破坏轻编辑、`captureId` 分阶段保存、兼容 SDR 副本与拍后操作、显式无声 Motion Photo | 改写 P-1 实验结论、覆盖/删除原片、重复发布、假 Live、音频/麦克风、隐藏美学分、厂商私有 API、LUT、FACE_RETOUCH |
-| 其他 P1 / 后期 | 只可保留现有模型或规则占位；必须有新的需求批准才实现 | 合影入口、角色切换入口、同步 iOS、其他 Android 机型兼容分支 |
+| `Scope` | 当前规范是否允许在本阶段实施 | 代码存在不等于获准 |
+| `Delivery` | 仓库中实际存在、已检查到什么，哪些仍 Unknown | 路径或占位不等于完整交付 |
+| `Verification` | 哪类自动化、仪器、目标机或产品验收有当前证据 | JVM/.NET Pass 不等于仪器、真机或产品 Pass |
 
-用户直接要求一个尚未满足前置条件的产品层级时，不要伪装成普通实现细节。指出具体需求章节和缺失门槛；只有获得明确产品决策后才扩大范围。
+同一任务必须分别给出三个维度。`ApprovedSeparate` 能力不得计入 P-1 Go 证据；`GateLocked` 能力的服务或规则占位不得写成已批准交付；`Deferred` 不得渲染第一版入口。
 
-## 候选与两步不是一回事
+## 文件归属与权威角色
 
-- `CoachEngine` 每轮可产生构图、光/曝光、姿势三个候选，供节奏器选择。
-- P-1 必做预算始终是最多一个 `shooter` 动作加一个 `subject` 动作；界面一次只显示一个，编号只到 1/2、2/2。
-- 两步结束、跳过或没有高置信度候选时进入“可以拍了”。
-- “再优化一下”每张照片最多一条，是可选建议，不显示 3/3，也不能成为快门前置条件。
-- ExplainApi 即使返回三条，也只是 P0 候选；客户端仍需重新做听众、术语、优先级与两步预算过滤。
-
-## P-1 跨层约束
-
-- 用户手选意图后，本轮自动识别不能覆盖。
-- 预览可用后，除正在捕获或相机不可用外，屏幕与音量键快门始终可用。
-- 主路径必须离线；P-1 只申请 `CAMERA`。
-- 快捷焦段、EV、缩放和扩展模式只展示当前后摄标准 API 实际报告的能力，切换失败回到标准 Photo 并保留指导。
-- 三分网格、水平仪、倒计时、画幅、捕获偏好、语音和字幕设置可持久化；重置设置不能撤回端侧分析同意或删除照片。
-- 研究事件只能记录时间、匿名会话、意图、提示 ID、完成/跳过、快门与保存结果；不记预览帧、人脸坐标、照片内容或身份。
-
-## 文件归属
-
-| 内容 | 放置 |
+| 内容 | 位置与角色 |
 | --- | --- |
-| CameraX、Compose、权限、TTS、MediaStore、研究事件、P1 Android 图像处理 | `androidApp/` |
-| 平台无关信号模型、场景 JSON、候选选择、两步会话 | `coach/` |
-| “再讲细”契约、供应商适配和失败隔离 | `ExplainApi/` |
-| 产品行为与验收 | `docs/requirement.md` |
-| 技术选型与模块边界 | `docs/architecture.md` |
+| 产品总纲、范围、Go/No-Go、跨版本约束与隐私 | `docs/requirement.md`，最高产品入口 |
+| 用户、页面、取景器交互、指导、文案、场景与短口令 | `docs/requirements/interaction-guidance-and-scenarios.md`，当前产品附件 |
+| P1 创意与后期范围 | `docs/requirements/p1-creative.md`、`docs/requirements/deferred-scope.md`，当前产品附件 |
+| UX、真机矩阵与质量门槛 | `docs/acceptance/acceptance-plan.md`，当前验收附件 |
+| FR、Phase、组件、证据、Scope/Delivery/Verification | `docs/traceability/requirements-matrix.md`，当前追踪附件 |
+| 未决冲突 | `docs/traceability/decisions-and-conflicts.md`，当前冲突控制附件 |
+| 系统边界、依赖方向、质量属性、技术基线与回退 | `docs/architecture.md`，最高架构入口 |
+| 相机/感知、口令/Explain、创意/存储与 ADR | `docs/architecture/*.md`，当前架构专题 |
+| 研究依据 | `docs/research/`，只提供依据，不决定范围、交付或验证 |
+| 历史快照 | `docs/history/`，只供追溯，禁止作为当前规范 |
+| CameraX、Compose、权限、TTS、MediaStore、研究事件与 Android 图像处理 | `androidApp/` |
+| 平台无关信号、场景 JSON、候选与两步会话 | `coach/` |
+| “再讲细”契约、供应商适配与失败隔离 | `ExplainApi/` |
 
-`coach/` 禁止依赖 Android UI 或 `Context`。ExplainApi 禁止承载取景器状态机。P1 创意层不得把 Bitmap 或 Android 类型放进平台无关模型。
+`coach/` 禁止依赖 Android UI 或 `Context`；ExplainApi 禁止承载取景器状态机；P1 创意层不得把 Bitmap 或 Android 类型放进平台无关模型。技术归属不改变产品 Phase。
 
 ## 验收口径
 
-自动化环境没有小米 14 Pro。JVM/单元测试通过后，快捷焦段与 EXIF、真实 Zoom/EV、Extensions 三用例、AE/AF 3A、画幅成片、音量键倒计时、连续保存、遮挡误报、十二种风格与七项编辑真实颜色、连拍热量、HyperOS MediaStore 分阶段保存/收藏/回收站，以及 Live 四用例绑定、编码、裁剪和 Motion Photo 播放仍是 `NotRun`，直到有对应真机记录。真机记录至少包含地区版本、Android/HyperOS、Build fingerprint 和 App 版本。
+需要 UX、质量或目标机结论时必须读 `docs/acceptance/acceptance-plan.md`；需要某个 FR 的当前证据时必须同时读需求追踪矩阵。没有带设备与构建身份的当前小米 14 Pro 记录时，对应设备项目保持 `NotRun`。自动化结果只按实际命令和覆盖层报告。

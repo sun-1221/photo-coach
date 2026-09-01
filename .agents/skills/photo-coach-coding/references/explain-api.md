@@ -1,31 +1,22 @@
-# 讲解 API
+# 讲解 API 执行检查
 
-改 `ExplainApi/`、`ExplainApi.Tests/` 或 Android 客户端“再讲细”调用时读本文件。该能力属于完整 P0；P-1 主路径不调用，即使服务代码已存在。
+改 `ExplainApi/`、`ExplainApi.Tests/` 或 Android 客户端“再讲细”调用时读本文件。该文件不授予 P0 范围。
 
-## 范围与契约
+## 强制规范集合
 
-- 服务保持 .NET 10 ASP.NET Core Minimal API；不要为一个补充端点顺手引入 Controller、EF、ABP、登录或用户表。
-- 端点是 `POST /v1/explain`。请求包含压缩 JPEG、端侧 `signals` 与已有 `currentTips`；响应包含 `tips`、一句 `reason` 和 `available`。
-- 服务端输出最多三条候选，每条保留 text、audience、channel。只接受 `shooter`、`subject`、`proxy` audience；未知值丢弃。
-- 合同字段会被 Android 和可替换供应商消费。改名、空值策略或枚举语义是跨端契约变更，必须同时改测试和客户端。
-- API 的三条是候选，不是 P0 必做三步；客户端仍需过滤长度、术语、重复、听众、方向冲突与两步预算。
+- 先读两个入口，再读 `docs/architecture/guidance-and-explain.md`。
+- 客户端交互、同意、提示过滤或离线行为：读 `docs/requirements/interaction-guidance-and-scenarios.md`。
+- FR、Phase、组件、交付和证据：读 `docs/traceability/requirements-matrix.md`；验收与设备边界读验收计划。
+- 技术选型或供应商边界变化时读 `docs/architecture/decisions.md`；未决口径读冲突登记。
 
-## 隐私与失败隔离
+## 范围与实现边界
 
-- 用户在客户端明确点“再讲细”且首次单独同意后，才上传当前一帧；短边压到 512–768，并去除非必要元数据。
-- 不连续上传预览，不持久化图片，不建立人脸库或用户表，不把 provider 日志当作图像存储。
-- 拒绝或撤回后不发请求、不后台重试。供应商超时、异常、无效 JSON 或服务不可用时返回/显示“讲解暂时不可用”，端侧指导和快门继续。
-- Provider URL 为空时允许 stub；真实 provider 必须可替换，不能把供应商特有字段泄漏进公共合同。
-- 不要吞掉诊断所需的内部日志，但对客户端返回稳定、无敏感细节的失败合同。
+- 以需求追踪矩阵确认 ExplainApi 的当前 `Scope`。服务路径或 .NET 测试存在只说明 `Delivery` 事实，不能把 GateLocked P0 写成已获准或端到端已交付。
+- 保持当前架构规定的 .NET Minimal API、公共合同和可替换 provider 边界；不得顺手引入 Controller、数据库、身份系统或把供应商字段泄漏进客户端合同。
+- 候选上限、听众、术语、原因与客户端两步过滤以当前需求/架构附件为准；服务返回候选不改变客户端动作预算。
+- 上传只发生在当前规范允许的用户主动、单独同意路径；拒绝、撤回、超时、无效响应和服务不可用时，端侧指导、离线主路径和快门继续。禁止连续预览上传、图片落库或后台持续重试。
 
 ## 验证
 
-至少覆盖：
-
-- 正常补充并限制为三条。
-- provider 失败返回 `available=false` 且端点不抛 5xx。
-- 非法 audience、超长、摄影术语和重复候选的服务/客户端责任边界。
-- 合同序列化兼容。
-- Android 侧拒绝、撤回、离线和超时仍保留内置两步指导。
-
-从仓库根目录运行 `dotnet test ExplainApi.sln`。服务测试通过不能证明客户端同意流程、压缩、无后台重试或飞行模式主路径；未覆盖项必须单独报告。
+- 从仓库根运行 `dotnet test ExplainApi.sln`，覆盖合同、非法输出、provider 失败和序列化兼容等触碰行为。
+- .NET Pass 不证明 Android 侧同意、压缩、撤回、离线、超时、无后台重试或两步再过滤；这些没有相应证据时保持 `NotRun` 或 `Unknown`。

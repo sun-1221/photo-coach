@@ -1,8 +1,34 @@
 # 收尾自检
 
-只检查和运行触碰层。命令通过不能替代范围、隐私和真机口径；失败即该层未通过。
+只检查触碰层。命令通过不能替代范围、产品冲突、隐私、仪器或真机口径；失败即对应层未通过。
 
-## 默认命令
+## 规范路由
+
+- [ ] 所有仓库实现、修复、重构、测试或只读合规检查已先读 `docs/requirement.md`，再读 `docs/architecture.md`。
+- [ ] 已按任务信号加载最小但完整附件集合；没有只读两个入口就声称规范已完整读取。
+- [ ] 涉及 FR、Phase、实现状态、组件或证据时已读需求追踪矩阵；涉及 UX、质量或真机时已读验收计划。
+- [ ] 用户/页面/取景器交互/指导/文案/场景/短口令、P1、后期、相机感知、口令/Explain、创意存储、技术决定和冲突分别走 SKILL.md 的对应路由。
+- [ ] `docs/history/` 未被用作当前规范；`docs/research/` 未被用来扩大范围、证明交付或声称验证通过。
+- [ ] 命中的 `ConflictPending` 已保留双方并请求用户决定，没有由实现、测试、旧 reference 或“更严格解释”静默裁决。
+
+以下任一行为都视为路由失败：只读入口遗漏相关附件；把历史快照当当前规范；把 research 当产品批准；遗漏 `ConflictPending`；把 JVM/.NET Pass 写成 instrumented 或小米 14 Pro Pass。
+
+## 范围与状态
+
+- [ ] `Scope`、`Delivery`、`Verification` 已分别判断；路径存在不等于完整交付，自动化通过不等于真机通过。
+- [ ] Phase 使用需求追踪矩阵当前值；P0 GateLocked、P1 ApprovedSeparate、Deferred 没有提前或混入 P-1。
+- [ ] 新页面、权限、网络、场景、设备或平台没有越过用户授权和当前规范。
+- [ ] 只读任务未修改文件；编码任务只修改用户范围内文件并保留已有改动。
+
+## 分层回归
+
+- [ ] CameraX/Compose/权限/保存/TTS 已按 `android-camerax.md` 和当前相机/交互附件检查。
+- [ ] Face/Pose/帧/隐私已按 `mlkit-signals.md` 检查；没有沿用旧 FAST 配置、身份推断或错误帧关闭方式。
+- [ ] `coach/` 已按 `coach-engine.md` 检查模块边界、意图、动作预算、实时替换和回归样张。
+- [ ] ExplainApi 已按 `explain-api.md` 检查 GateLocked 范围、同意、失败隔离和客户端证据缺口。
+- [ ] P1 已按 `p1-creative.md` 检查 P-1 隔离、原片、`captureId`、分阶段恢复、资源与 Motion Photo fallback。
+
+## 默认自动化
 
 当前环境是 Windows PowerShell：
 
@@ -10,61 +36,12 @@
 - Android JVM 单测：`.\gradlew.bat :androidApp:testDebugUnitTest`
 - 讲解 API：`dotnet test ExplainApi.sln`
 
-在 Unix shell 把 `.\gradlew.bat` 换成 `./gradlew`。不要并行启动会争同一 Gradle 输出或同一 `bin/obj` 的重复构建。
-
-## 范围与版本
-
-- [ ] 已标明 P-1 / P0 / P1；没有把后续页面、权限、网络、场景或设备混入当前层。
-- [ ] P-1 仍是后摄单人、两个意图、三个场景、最多两个必做动作、手动快门和离线保存。
-- [ ] 候选最多三条没有变成同屏三条、3/3 或快门前置条件。
-- [ ] 用户意图锁、跳过、Ready 和每轮最多一条可选建议仍成立。
-- [ ] 没有合影入口、角色切换入口、第一版 iOS、其他 Android 厂商分支或不可用“即将推出”。
-
-## Android 相机
-
-- [ ] 仍是 Kotlin + Compose + CameraX；依赖版本变更若非任务目标已撤销。
-- [ ] 默认同时绑定 Preview + ImageAnalysis + ImageCapture，画幅策略一致；只有显式无声 Live 能进入四用例。
-- [ ] Live 四用例继续保留 Analysis，强制普通 Photo、关闭 Extensions、不启用音频；任何不支持或失败都回退普通 JPEG并清除假 Live 状态。
-- [ ] Analysis 是 `STRATEGY_KEEP_ONLY_LATEST`；只关闭 `ImageProxy`，正常/异常路径都释放。
-- [ ] Extensions 同时检查 availability 与 ImageAnalysis support；失败回标准 Photo 且指导继续。
-- [ ] 没有用不支持 Analysis 的 `ExtensionSessionConfig` 取代三用例主路径。
-- [ ] EV、Zoom、快捷焦段和扩展模式来自当前能力；没有固定 2x 或伪光学标签。
-- [ ] AE/AF 锁定、重绑解锁、倒计时取消、音量键快门和捕获偏好保持可恢复。
-- [ ] 权限说明先于 CAMERA；拒绝、占用、绑定和保存失败有可见恢复路径。
-- [ ] P-1 与无声 Live 未新增其他权限，尤其没有 `RECORD_AUDIO`；最近照片只用本次 URI。
-- [ ] MediaStore 发布正确处理 API 29+ `RELATIVE_PATH/IS_PENDING` 和失败清理。
-- [ ] TTS 只播 subject；字幕与拍摄者动作卡不依赖语音成功。
-
-## 感知与口令
-
-- [ ] Face FAST、Pose STREAM；没有无需求 contour/tracking/classification。
-- [ ] 两张脸以上或姿态不足时不进入单人姿势，不输出身份或评分。
-- [ ] 镜头遮挡用多帧且文案保守。
-- [ ] `coach/` 无 Android 依赖；P0/P1 场景不会参与 P-1 匹配。
-- [ ] 场景对/错/必现/禁现、两步预算、去抖、相反方向和 TTS 节流测试通过。
-
-## Explain API
-
-- [ ] 只有 P0 按需路径调用；P-1 和离线主路径不依赖服务。
-- [ ] 仍是 Minimal API；没有顺手加入数据库、身份或持续上传。
-- [ ] 合同稳定、最多三条候选、非法 audience 过滤、provider 失败隔离。
-- [ ] 客户端单独同意、撤回不重试、压缩和两步再过滤有实现或明确未覆盖。
-
-## P1 创意层
-
-- [ ] `CreativeStyle` 是批准的十二种；预览、导出和七项编辑共用同一确定性矩阵，支持 undo / redo / reset；低于 API 31 或失败回原图。
-- [ ] 默认先发布原片并私有保存配方，效果 JPEG 只在明确另存或用户主动开启自动双保存时生成；任何失败不撤销或覆盖原片。
-- [ ] 每次捕获使用不可复用 `captureId`；保存分阶段可见、部分成功只重试失败阶段，journal 恢复不重复发布。
-- [ ] 原片写 `DATE_TAKEN`；派生图只复制安全 EXIF，排除 GPS、缩略图、MakerNote 和未知标签。
-- [ ] 完整质量/省空间副本均明确为兼容 SDR；解码不超过对应像素上限、最多两个受限 Bitmap、临时文件全路径清理、OOM 受控。
-- [ ] 三张只在用户明确开启后顺序捕获；重入、单张失败、重试和已保存照片处理符合状态机。
-- [ ] 选优不显示美学分、不自动删照片；P1 数据不计入 P-1 Go。
-- [ ] 打开、分享、收藏和回收站只操作本 App 本次 URI；不读整本相册，不新增定位，平台不支持时不伪装成功。
-- [ ] Motion Photo 只发布一个 `…MP.JPG` 主文件，XMP 含版本/封面时间戳和仅 Primary/MotionPhoto 两项；视频长度准确且紧密位于文件末尾。
-- [ ] Motion Photo 录制、裁剪、XMP、发布、取消和恢复路径都清理临时视频/pending 行；失败可靠回退普通 JPEG且至多发布一个主文件。
+在 Unix shell 把 `.\gradlew.bat` 换成 `./gradlew`。不要并行启动会争同一 Gradle 输出或同一 `bin/obj` 的重复构建。只运行触碰层的最小充分集合，并记录未运行层。
 
 ## 结果口径
 
-- [ ] 自动化结果逐条列出，不用“全部通过”掩盖未运行层。
-- [ ] 没有小米 14 Pro 记录的快捷焦段/EXIF、真实 Zoom/EV、Extensions、3A、画幅、连续保存、遮挡误报、十二种风格/七项编辑真实颜色、连拍热量、HyperOS 分阶段保存/收藏/回收站，以及 Live 四用例/编码/裁剪/Motion Photo 播放写 `NotRun`。
-- [ ] 真机通过项包含地区版本、Android/HyperOS、Build fingerprint 和 App 版本。
+- [ ] 每条命令、测试层和结果单独记录，不用“全部通过”掩盖未运行项。
+- [ ] 需求追踪矩阵与验收计划中没有当前证据的 instrumented、设备和产品验收项仍为 `NotRun`/`Unknown`。
+- [ ] 没有小米 14 Pro 记录时，焦段/EXIF、Zoom/EV、Extensions、3A、画幅、按键、连续保存、遮挡误报、风格/编辑颜色、连拍热量、HyperOS 分阶段保存/拍后操作、Live 四用例/编码/裁剪/Motion Photo 播放等均未被写成通过。
+- [ ] 真机通过项包含地区版本、Android/HyperOS、Build fingerprint 和 App 版本；缺任一身份信息不得泛化覆盖。
+- [ ] 完成汇报包含 `Changed`、`Scope`、`Delivery`、`Verification`、`Rules`、`Validated`、`NotRun` 与 `Residual risk`。
