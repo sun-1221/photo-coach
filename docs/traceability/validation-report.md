@@ -71,3 +71,14 @@ Gradle 输出显示任务为 UP-TO-DATE 仍代表本次门禁命令成功；它�
 ## 6. 语义超集结论
 
 当前规范集合保留重构前全部内容：入口保留总纲/门禁/隐私/架构基线，整段细则迁入附件，FR/UX 扩展为追踪与分阶段结构，研究与 ADR 保留原始依据，冲突未决项同时保留双方。新增内容仅为权威路由、状态分离、迁移映射和验证证据；未发现删除、弱化或把 NotRun/Unknown 改写为通过。
+
+## 7. 2026-09-01 P1 第二阶段修复验证
+
+本节仅登记 ApprovedSeparate 的 FR-32～FR-37 代码与 JVM 证据，不计入 P-1 Go/No-Go。
+
+| 命令/检查 | 结果 |
+| --- | --- |
+| `.\gradlew.bat :coach:test --rerun-tasks` | Pass（51 tests，0 failed / 0 skipped） |
+| `.\gradlew.bat :androidApp:testDebugUnitTest --rerun-tasks` | Pass（110 tests，0 failed / 0 skipped） |
+
+已覆盖姿势证据计时与换姿势重置、背景细节与手持稳定信号、风格分组与拍前强度、热状态 ML 降级与拍摄中延迟重绑、原片/效果副本分域校验及旧日志兼容。Android instrumented、小米 14 Pro / HyperOS 真机、连续 100 张与保存阶段杀进程矩阵仍为 NotRun。

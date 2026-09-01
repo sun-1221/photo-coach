@@ -28,6 +28,8 @@ object SignalFactory {
         hasTelephotoPreset: Boolean,
         focusOnFace: Boolean,
         lensObscured: Boolean,
+        handheldStable: Boolean = true,
+        backgroundAnalysisEnabled: Boolean = true,
     ): Pair<Signals, OverlayGeometry> {
         val viewArea = (viewWidth * viewHeight).coerceAtLeast(1).toFloat()
         val largest = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }
@@ -90,6 +92,11 @@ object SignalFactory {
             box.left <= marginX || box.right >= viewWidth - marginX ||
                 box.top <= marginY || box.bottom >= viewHeight - marginY
         } == true
+        val backgroundEdgeDensityHigh = backgroundAnalysisEnabled && largest?.boundingBox?.let { box ->
+            stats.lumaGrid?.edgeDensityAround(
+                LumaRegion(box.left.toFloat(), box.top.toFloat(), box.right.toFloat(), box.bottom.toFloat()),
+            )?.let { it >= 0.35f }
+        } == true
         val signals = Signals(
             faceCount = faces.size,
             faceRatio = faceRatio,
@@ -123,6 +130,8 @@ object SignalFactory {
             seatedCandidate = poseSignals.seatedCandidate,
             torsoUpright = poseSignals.torsoUpright,
             walkingCandidate = poseSignals.fullBodyVisible,
+            backgroundEdgeDensityHigh = backgroundEdgeDensityHigh,
+            handheldStable = handheldStable,
             meanLuma = stats.meanY,
             highlightRatio = stats.highlightRatio,
         )

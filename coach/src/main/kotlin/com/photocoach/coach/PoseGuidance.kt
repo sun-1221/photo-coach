@@ -83,6 +83,7 @@ class PoseGuidanceReducer(
     var state: PoseGuidanceState = PoseGuidanceState.Disabled
         private set
     private var evidenceSinceMs: Long? = null
+    private var evidenceCueId: String? = null
     private var satisfactionSinceMs: Long? = null
 
     fun select(category: PoseCategory, nowMs: Long) { state = PoseGuidanceState.Acquiring(category, nowMs); reset() }
@@ -112,14 +113,26 @@ class PoseGuidanceReducer(
 
     private fun acquire(category: PoseCategory, signals: Signals, nowMs: Long) {
         val cue = PoseCueCatalog.forCategory(category).firstOrNull { it.isEligible(signals) }
-        if (cue == null) { evidenceSinceMs = null; return }
+        if (cue == null) {
+            evidenceSinceMs = null
+            evidenceCueId = null
+            return
+        }
+        if (evidenceCueId != cue.id) {
+            evidenceCueId = cue.id
+            evidenceSinceMs = nowMs
+        }
         val since = evidenceSinceMs ?: nowMs.also { evidenceSinceMs = it }
-        if (nowMs - since >= acquisitionMs) { state = PoseGuidanceState.Eligible(cue, nowMs); evidenceSinceMs = null }
+        if (nowMs - since >= acquisitionMs) {
+            state = PoseGuidanceState.Eligible(cue, nowMs)
+            evidenceSinceMs = null
+            evidenceCueId = null
+        }
     }
 
     private fun updateActive(current: PoseGuidanceState.CueActive, signals: Signals, nowMs: Long) {
         val cue = current.cue
-        if (cue.completion == PoseCompletion.TIMED_INSPIRATION || nowMs - current.sinceMs >= cue.timeoutMs) {
+        if (nowMs - current.sinceMs >= cue.timeoutMs) {
             state = PoseGuidanceState.Satisfied(cue, nowMs); satisfactionSinceMs = null; return
         }
         if (!cue.isEligible(signals) && !cue.isSatisfied(signals)) {
@@ -142,5 +155,5 @@ class PoseGuidanceReducer(
         is PoseGuidanceState.MultiPersonSuppressed -> value.category
     }
 
-    private fun reset() { evidenceSinceMs = null; satisfactionSinceMs = null }
+    private fun reset() { evidenceSinceMs = null; evidenceCueId = null; satisfactionSinceMs = null }
 }

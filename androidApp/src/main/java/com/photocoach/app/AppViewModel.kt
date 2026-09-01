@@ -12,6 +12,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.core.net.toUri
 import com.photocoach.app.analysis.AnalyzerExtras
 import com.photocoach.app.analysis.FaceFocusSignalState
+import com.photocoach.app.analysis.DeviceMotionStabilityTracker
 import com.photocoach.app.analysis.OverlayGeometry
 import com.photocoach.app.camera.FlashSetting
 import com.photocoach.app.camera.CameraCapabilities
@@ -208,6 +209,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val sessionStartedAtMs = now()
     private val sensorManager = application.getSystemService(SensorManager::class.java)
     private val gravity = FloatArray(3)
+    private val motionStabilityTracker = DeviceMotionStabilityTracker()
+    @Volatile private var handheldStable: Boolean = true
     private var lastEvalAtMs = 0L
     private var lastSignals = Signals()
     private var lastSceneAppliedRound = -1
@@ -264,6 +267,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             gravity[1] = event.values[1]
             gravity[2] = event.values[2]
             tiltDegrees = Math.toDegrees(kotlin.math.atan2(gravity[0], gravity[1]).toDouble()).toFloat()
+            handheldStable = motionStabilityTracker.update(event.values[0], event.values[1], event.values[2])
         }
 
         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
@@ -295,6 +299,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         tiltDegrees = tiltDegrees,
         hasTelephotoPreset = hasTelephotoPreset,
         focusOnFace = faceFocusSignal.focusOnFace,
+        handheldStable = handheldStable,
     )
 
     fun onCameraReady(capabilities: CameraCapabilities) {
@@ -624,6 +629,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         persistSettings()
+    }
+
+    fun setCreativeStyleStrength(strength: Float) {
+        if (_ui.value.guidance.stage is GuidanceStage.Capturing) return
+        val clamped = strength.coerceIn(0f, 1f)
+        _ui.update {
+            it.copy(
+                creativeStyleStrength = if (it.creativeStyle == CreativeStyle.ORIGINAL) 0f else clamped,
+                controlMessage = if (it.creativeStyle == CreativeStyle.ORIGINAL) {
+                    "原图不应用风格强度"
+                } else {
+                    "已将${it.creativeStyle.label}强度设为 ${(clamped * 100).roundToInt()}%；原片仍会保留"
+                },
+            )
+        }
     }
 
     fun selectPoseCategory(category: PoseCategory?) {
@@ -1240,6 +1260,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         sensorManager.unregisterListener(tiltListener)
+        motionStabilityTracker.reset()
         super.onCleared()
     }
 

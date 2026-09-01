@@ -37,6 +37,7 @@ import com.photocoach.app.camera.CameraModePreference
 import com.photocoach.app.camera.CapturePriority
 import com.photocoach.app.camera.CaptureSpec
 import com.photocoach.app.camera.ThermalStateMonitor
+import com.photocoach.app.camera.ThermalRebindGate
 import com.photocoach.app.creative.ParameterAction
 import com.photocoach.app.creative.ParameterSuggestion
 import com.photocoach.app.tts.GuidanceTts
@@ -54,6 +55,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var camera: CameraBinder
     private lateinit var tts: GuidanceTts
     private lateinit var thermalMonitor: ThermalStateMonitor
+    private val thermalRebindGate = ThermalRebindGate()
     private var previewView: PreviewView? = null
     private var cameraConsented by mutableStateOf(false)
     private var permissionState by mutableStateOf(PermissionState.UNKNOWN)
@@ -78,7 +80,12 @@ class MainActivity : ComponentActivity() {
         thermalMonitor = ThermalStateMonitor(this) { level ->
             camera.updateThermalLevel(level)
             viewModel.onThermalLevel(level)
-            if (permissionState == PermissionState.GRANTED) prepareAndRebind()
+            if (
+                permissionState == PermissionState.GRANTED &&
+                thermalRebindGate.onThermalChanged(cameraOperationInProgress())
+            ) {
+                prepareAndRebind()
+            }
         }.also { it.start() }
         tts = GuidanceTts(this)
         cameraConsented = prefs().getBoolean(PREF_CAMERA_CONSENT, false)
@@ -199,6 +206,7 @@ class MainActivity : ComponentActivity() {
                         onHideFocusControls = viewModel::hideFocusControls,
                         onDismissControlMessage = viewModel::dismissControlMessage,
                         onCreativeStyleChange = viewModel::setCreativeStyle,
+                        onCreativeStyleStrengthChange = viewModel::setCreativeStyleStrength,
                         onToggleCurrentStyleFavorite = viewModel::toggleCurrentStyleFavorite,
                         onPoseCategoryChange = viewModel::selectPoseCategory,
                         onP1TechniquesEnabledChange = viewModel::setP1TechniquesEnabled,
@@ -386,10 +394,16 @@ class MainActivity : ComponentActivity() {
             spec = spec,
             onSaveProgress = viewModel::onSaveProgress,
             onSaved = { photo ->
-                if (viewModel.onPhotoCaptured(photo)) captureNextShot()
+                if (viewModel.onPhotoCaptured(photo)) captureNextShot() else applyDeferredThermalRebind()
             },
-            onSaveError = { viewModel.onSaveFailed(it, retryAvailable = true) },
-            onCaptureError = { viewModel.onSaveFailed(it, retryAvailable = false) },
+            onSaveError = {
+                viewModel.onSaveFailed(it, retryAvailable = true)
+                applyDeferredThermalRebind()
+            },
+            onCaptureError = {
+                viewModel.onSaveFailed(it, retryAvailable = false)
+                applyDeferredThermalRebind()
+            },
         )
     }
 
@@ -397,11 +411,29 @@ class MainActivity : ComponentActivity() {
         if (!viewModel.beginRetrySave()) return
         val started = camera.retrySave(
             onSaved = { photo ->
-                if (viewModel.onPhotoCaptured(photo)) captureNextShot()
+                if (viewModel.onPhotoCaptured(photo)) captureNextShot() else applyDeferredThermalRebind()
             },
-            onSaveError = { viewModel.onSaveFailed(it, retryAvailable = true) },
+            onSaveError = {
+                viewModel.onSaveFailed(it, retryAvailable = true)
+                applyDeferredThermalRebind()
+            },
         )
-        if (!started) viewModel.onSaveFailed(IllegalStateException("待保存照片不可用"), retryAvailable = false)
+        if (!started) {
+            viewModel.onSaveFailed(IllegalStateException("待保存照片不可用"), retryAvailable = false)
+            applyDeferredThermalRebind()
+        }
+    }
+
+    private fun cameraOperationInProgress(): Boolean =
+        viewModel.ui.value.guidance.stage is GuidanceStage.Capturing
+
+    private fun applyDeferredThermalRebind() {
+        if (
+            permissionState == PermissionState.GRANTED &&
+            thermalRebindGate.onCameraOperationSettled()
+        ) {
+            prepareAndRebind()
+        }
     }
 
     private fun saveCreativeCopy() {

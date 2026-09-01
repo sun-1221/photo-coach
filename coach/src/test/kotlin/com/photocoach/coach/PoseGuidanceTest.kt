@@ -38,4 +38,26 @@ class PoseGuidanceTest {
         assertTrue(inspirations.isNotEmpty())
         assertTrue(inspirations.all { !it.isSatisfied(Signals(faceCount = 1, faceReliable = true, poseReliable = true)) })
     }
+
+    @Test fun `timed inspiration remains active until its timeout`() {
+        val reducer = PoseGuidanceReducer()
+        val evidence = Signals(faceCount = 1, faceReliable = true, poseReliable = true)
+        reducer.select(PoseCategory.SOLO_INTERACTION, 0)
+        assertTrue(reducer.update(evidence, 0) is PoseGuidanceState.Acquiring)
+        assertTrue(reducer.update(evidence, 600) is PoseGuidanceState.Eligible)
+        assertTrue(reducer.update(evidence, 601) is PoseGuidanceState.CueActive)
+        assertTrue(reducer.update(evidence, 4_600) is PoseGuidanceState.CueActive)
+        assertTrue(reducer.update(evidence, 4_601) is PoseGuidanceState.Satisfied)
+    }
+
+    @Test fun `changing eligible evidence restarts acquisition stability window`() {
+        val reducer = PoseGuidanceReducer()
+        reducer.select(PoseCategory.CLOSE_UP, 0)
+        val turned = Signals(faceCount = 1, faceReliable = true, faceTurnedAway = true)
+        val closedEyes = Signals(faceCount = 1, faceReliable = true, eyesLikelyClosed = true)
+        assertTrue(reducer.update(turned, 0) is PoseGuidanceState.Acquiring)
+        assertTrue(reducer.update(closedEyes, 599) is PoseGuidanceState.Acquiring)
+        assertTrue(reducer.update(closedEyes, 600) is PoseGuidanceState.Acquiring)
+        assertTrue(reducer.update(closedEyes, 1_199) is PoseGuidanceState.Eligible)
+    }
 }

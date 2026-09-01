@@ -205,6 +205,7 @@ class CameraBinder(
             extras = extras,
             onFrame = onSignals,
             minimumFrameIntervalMs = { ThermalPolicy.forLevel(thermalLevel).analysisIntervalMs },
+            poseAndBackgroundEnabled = { ThermalPolicy.forLevel(thermalLevel).poseAndBackgroundEnabled },
         )
         analyzer = coachAnalyzer
 
@@ -874,7 +875,7 @@ class CameraBinder(
                         pending.spec.takenAtMillis,
                         motionPhoto = pending.isMotionPhoto,
                         onAssetStage = { stage ->
-                            pending.verifiedAssetStages += stage.name
+                            pending.verifiedAssetStages += assetStageKey(PublishedAssetKind.ORIGINAL, stage)
                             if (stage == AssetPublishStage.VERIFY_PUBLISHED) pending.outputLength = pending.primaryFile().length()
                             writeJournal(pending)
                         },
@@ -938,6 +939,10 @@ class CameraBinder(
                                 pending.spec.takenAtMillis,
                             ),
                             pending.spec.takenAtMillis,
+                            onAssetStage = { stage ->
+                                pending.verifiedAssetStages += assetStageKey(PublishedAssetKind.DERIVATIVE, stage)
+                                writeJournal(pending)
+                            },
                             onPendingCreated = { pendingUri ->
                                 pending.derivativePendingUri = pendingUri
                                 writeJournal(pending)
@@ -1092,6 +1097,43 @@ class CameraBinder(
                     journalStore.delete(record)
                     return@runCatching
                 }
+                val motionPhoto = record.motionPhotoRequested && !record.motionPhotoFallback && packaged != null
+                if (
+                    record.originalUri != null &&
+                    !record.verifiedAssetStages.containsAssetStage(
+                        PublishedAssetKind.ORIGINAL,
+                        AssetPublishStage.VERIFY_PUBLISHED,
+                    )
+                ) {
+                    recoveryStage = SaveStage.ORIGINAL_PUBLISH
+                    val publishedUri = Uri.parse(record.originalUri)
+                    runCatching {
+                        PublishedAssetVerifier.verifyPublished(
+                            resolver,
+                            publishedUri,
+                            record.displayName,
+                            CaptureSaver.RELATIVE_DIR,
+                            motionPhoto,
+                        )
+                    }.onSuccess {
+                        record = record.copy(
+                            completedStages = record.completedStages + SaveStage.ORIGINAL_PUBLISH.name,
+                            verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
+                                PublishedAssetKind.ORIGINAL,
+                                AssetPublishStage.VERIFY_PUBLISHED,
+                            ),
+                        )
+                        journalStore.write(record)
+                    }.onFailure {
+                        CaptureSaver.deleteQuietly(resolver, publishedUri)
+                        record = record.copy(
+                            originalUri = null,
+                            completedStages = record.completedStages - SaveStage.ORIGINAL_PUBLISH.name,
+                            verifiedAssetStages = record.verifiedAssetStages.withoutAssetStages(PublishedAssetKind.ORIGINAL),
+                        )
+                        journalStore.write(record)
+                    }
+                }
                 if (record.originalUri == null) {
                     recoveryStage = SaveStage.ORIGINAL_PUBLISH
                     if (primary == null) {
@@ -1101,7 +1143,6 @@ class CameraBinder(
                         journalStore.delete(record)
                         return@runCatching
                     }
-                    val motionPhoto = record.motionPhotoRequested && !record.motionPhotoFallback && packaged != null
                     val stalePending = record.pendingUri?.let(Uri::parse)
                     val resumed = stalePending?.let { pendingUri ->
                         runCatching {
@@ -1111,6 +1152,19 @@ class CameraBinder(
                                 primary,
                                 record.displayName,
                                 motionPhoto = motionPhoto,
+                                pendingAlreadyVerified = record.verifiedAssetStages.containsAssetStage(
+                                    PublishedAssetKind.ORIGINAL,
+                                    AssetPublishStage.VERIFY_PENDING,
+                                ),
+                                onAssetStage = { stage ->
+                                    record = record.copy(
+                                        verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
+                                            PublishedAssetKind.ORIGINAL,
+                                            stage,
+                                        ),
+                                    )
+                                    journalStore.write(record)
+                                },
                             )
                         }.onFailure {
                             CaptureSaver.deleteQuietly(resolver, pendingUri)
@@ -1124,6 +1178,15 @@ class CameraBinder(
                         record.displayName,
                         record.takenAtMillis,
                         motionPhoto = motionPhoto,
+                        onAssetStage = { stage ->
+                            record = record.copy(
+                                verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
+                                    PublishedAssetKind.ORIGINAL,
+                                    stage,
+                                ),
+                            )
+                            journalStore.write(record)
+                        },
                         onPendingCreated = { pendingUri ->
                             record = record.copy(pendingUri = pendingUri.toString())
                             journalStore.write(record)
@@ -1133,6 +1196,10 @@ class CameraBinder(
                         pendingUri = null,
                         originalUri = uri.toString(),
                         completedStages = record.completedStages + SaveStage.ORIGINAL_PUBLISH.name,
+                        verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
+                            PublishedAssetKind.ORIGINAL,
+                            AssetPublishStage.VERIFY_PUBLISHED,
+                        ),
                         failedStage = null,
                         error = null,
                     )
@@ -1162,6 +1229,49 @@ class CameraBinder(
                     )
                     record = record.copy(completedStages = record.completedStages + SaveStage.RECIPE_WRITE.name)
                     journalStore.write(record)
+                }
+                if (
+                    record.derivativeRequested &&
+                    record.derivativeUri != null &&
+                    !record.verifiedAssetStages.containsAssetStage(
+                        PublishedAssetKind.DERIVATIVE,
+                        AssetPublishStage.VERIFY_PUBLISHED,
+                    )
+                ) {
+                    recoveryStage = SaveStage.DERIVATIVE_PUBLISH
+                    val publishedUri = Uri.parse(record.derivativeUri)
+                    val displayName = CaptureIdentity.displayName(
+                        CaptureId(record.captureId),
+                        CaptureAssetKind.EFFECT,
+                        record.sequence,
+                        record.takenAtMillis,
+                    )
+                    runCatching {
+                        PublishedAssetVerifier.verifyPublished(
+                            resolver,
+                            publishedUri,
+                            displayName,
+                            CaptureSaver.RELATIVE_DIR,
+                            motionPhoto = false,
+                        )
+                    }.onSuccess {
+                        record = record.copy(
+                            completedStages = record.completedStages + SaveStage.DERIVATIVE_PUBLISH.name,
+                            verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
+                                PublishedAssetKind.DERIVATIVE,
+                                AssetPublishStage.VERIFY_PUBLISHED,
+                            ),
+                        )
+                        journalStore.write(record)
+                    }.onFailure {
+                        CaptureSaver.deleteQuietly(resolver, publishedUri)
+                        record = record.copy(
+                            derivativeUri = null,
+                            completedStages = record.completedStages - SaveStage.DERIVATIVE_PUBLISH.name,
+                            verifiedAssetStages = record.verifiedAssetStages.withoutAssetStages(PublishedAssetKind.DERIVATIVE),
+                        )
+                        journalStore.write(record)
+                    }
                 }
                 if (record.derivativeRequested && record.derivativeUri == null && !source.isFile) {
                     recoveryStage = SaveStage.DERIVATIVE_GENERATE
@@ -1204,6 +1314,19 @@ class CameraBinder(
                                 record.sequence,
                                 record.takenAtMillis,
                             ),
+                            pendingAlreadyVerified = record.verifiedAssetStages.containsAssetStage(
+                                PublishedAssetKind.DERIVATIVE,
+                                AssetPublishStage.VERIFY_PENDING,
+                            ),
+                            onAssetStage = { stage ->
+                                record = record.copy(
+                                    verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
+                                        PublishedAssetKind.DERIVATIVE,
+                                        stage,
+                                    ),
+                                )
+                                journalStore.write(record)
+                            },
                         )
                     } ?: CaptureSaver.publish(
                         resolver,
@@ -1215,16 +1338,30 @@ class CameraBinder(
                             record.takenAtMillis,
                         ),
                         record.takenAtMillis,
-                    ) { pendingUri ->
-                        record = record.copy(derivativePendingUri = pendingUri.toString())
-                        journalStore.write(record)
-                    }
+                        onAssetStage = { stage ->
+                            record = record.copy(
+                                verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
+                                    PublishedAssetKind.DERIVATIVE,
+                                    stage,
+                                ),
+                            )
+                            journalStore.write(record)
+                        },
+                        onPendingCreated = { pendingUri ->
+                            record = record.copy(derivativePendingUri = pendingUri.toString())
+                            journalStore.write(record)
+                        },
+                    )
                     derivative.delete()
                     record = record.copy(
                         derivativePendingUri = null,
                         derivativeUri = derivativeUri.toString(),
                         derivativePath = null,
                         completedStages = record.completedStages + SaveStage.DERIVATIVE_PUBLISH.name,
+                        verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
+                            PublishedAssetKind.DERIVATIVE,
+                            AssetPublishStage.VERIFY_PUBLISHED,
+                        ),
                     )
                     journalStore.write(record)
                 }

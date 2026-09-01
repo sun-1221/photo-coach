@@ -182,6 +182,30 @@ class LumaGrid internal constructor(
     fun meanOutside(region: LumaRegion, minSamples: Int = 1): Float? =
         aggregate(region, includeInside = false, minSamples = minSamples)
 
+    fun edgeDensityAround(region: LumaRegion, minComparisons: Int = 12): Float? {
+        if (region.width <= 0f || region.height <= 0f || minComparisons <= 0) return null
+        val outer = region.expand(0.65f)
+        val inner = region.expand(0.12f)
+        var comparisons = 0
+        var strongEdges = 0
+        for (row in 0 until sampleRows) {
+            for (column in 0 until sampleColumns) {
+                val point = displayPoint(row, column)
+                if (!point.inRegion(outer) || point.inRegion(inner)) continue
+                listOf(column + 1 to row, column to row + 1).forEach { (nextColumn, nextRow) ->
+                    if (nextColumn >= sampleColumns || nextRow >= sampleRows) return@forEach
+                    val nextPoint = displayPoint(nextRow, nextColumn)
+                    if (!nextPoint.inRegion(outer) || nextPoint.inRegion(inner)) return@forEach
+                    comparisons++
+                    val first = sampleValue(row, column)
+                    val second = sampleValue(nextRow, nextColumn)
+                    if (abs(first - second) >= BACKGROUND_EDGE_DELTA) strongEdges++
+                }
+            }
+        }
+        return if (comparisons >= minComparisons) strongEdges.toFloat() / comparisons else null
+    }
+
     private fun aggregate(region: LumaRegion, includeInside: Boolean, minSamples: Int): Float? {
         if (
             !region.left.isFinite() || !region.top.isFinite() ||
@@ -199,25 +223,39 @@ class LumaGrid internal constructor(
         var sum = 0L
         var count = 0
         for (sampleRow in 0 until sampleRows) {
-            val sourceY = sampleRow * step
             for (sampleColumn in 0 until sampleColumns) {
-                val sourceX = sampleColumn * step
-                val (displayX, displayY) = when (rotation) {
-                    90 -> sourceHeight - 1 - sourceY to sourceX
-                    180 -> sourceWidth - 1 - sourceX to sourceHeight - 1 - sourceY
-                    270 -> sourceY to sourceWidth - 1 - sourceX
-                    else -> sourceX to sourceY
-                }
+                val (displayX, displayY) = displayPoint(sampleRow, sampleColumn)
                 val inside = hasClippedArea &&
                     displayX >= clippedLeft && displayX < clippedRight &&
                     displayY >= clippedTop && displayY < clippedBottom
                 if (inside == includeInside) {
-                    sum += (samples[sampleRow * sampleColumns + sampleColumn].toInt() and 0xff)
+                    sum += sampleValue(sampleRow, sampleColumn)
                     count += 1
                 }
             }
         }
         return if (count >= minSamples) sum.toFloat() / count else null
+    }
+
+    private fun displayPoint(sampleRow: Int, sampleColumn: Int): Pair<Int, Int> {
+        val sourceX = sampleColumn * step
+        val sourceY = sampleRow * step
+        return when (rotation) {
+            90 -> sourceHeight - 1 - sourceY to sourceX
+            180 -> sourceWidth - 1 - sourceX to sourceHeight - 1 - sourceY
+            270 -> sourceY to sourceWidth - 1 - sourceX
+            else -> sourceX to sourceY
+        }
+    }
+
+    private fun Pair<Int, Int>.inRegion(region: LumaRegion): Boolean =
+        first >= region.left && first < region.right && second >= region.top && second < region.bottom
+
+    private fun sampleValue(row: Int, column: Int): Int =
+        samples[row * sampleColumns + column].toInt() and 0xff
+
+    private companion object {
+        const val BACKGROUND_EDGE_DELTA = 28
     }
 }
 

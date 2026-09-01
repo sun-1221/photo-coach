@@ -68,12 +68,20 @@ object CaptureSaver {
         source: File,
         displayName: String,
         motionPhoto: Boolean = false,
+        pendingAlreadyVerified: Boolean = false,
+        onAssetStage: ((AssetPublishStage) -> Unit)? = null,
     ): Uri {
         require(source.isFile && source.length() > 0L) { "captured photo is empty" }
-        writePending(resolver, uri, source)
-        PublishedAssetVerifier.verifyPending(resolver, uri, motionPhoto)
+        if (!pendingAlreadyVerified) {
+            writePending(resolver, uri, source)
+            onAssetStage?.invoke(AssetPublishStage.ORIGINAL_COPY)
+            PublishedAssetVerifier.verifyPending(resolver, uri, motionPhoto)
+            onAssetStage?.invoke(AssetPublishStage.VERIFY_PENDING)
+        }
         commit(resolver, uri)
+        onAssetStage?.invoke(AssetPublishStage.MEDIASTORE_COMMIT)
         PublishedAssetVerifier.verifyPublished(resolver, uri, displayName, RELATIVE_DIR, motionPhoto)
+        onAssetStage?.invoke(AssetPublishStage.VERIFY_PUBLISHED)
         return uri
     }
 
@@ -107,3 +115,20 @@ enum class AssetPublishStage {
     MEDIASTORE_COMMIT,
     VERIFY_PUBLISHED,
 }
+
+enum class PublishedAssetKind {
+    ORIGINAL,
+    DERIVATIVE,
+}
+
+internal fun assetStageKey(kind: PublishedAssetKind, stage: AssetPublishStage): String =
+    "${kind.name}:${stage.name}"
+
+internal fun Set<String>.containsAssetStage(kind: PublishedAssetKind, stage: AssetPublishStage): Boolean =
+    assetStageKey(kind, stage) in this ||
+        (kind == PublishedAssetKind.ORIGINAL && stage.name in this)
+
+internal fun Set<String>.withoutAssetStages(kind: PublishedAssetKind): Set<String> = filterNot { value ->
+    value.startsWith("${kind.name}:") ||
+        (kind == PublishedAssetKind.ORIGINAL && AssetPublishStage.entries.any { it.name == value })
+}.toSet()

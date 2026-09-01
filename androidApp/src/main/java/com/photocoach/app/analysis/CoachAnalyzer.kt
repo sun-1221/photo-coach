@@ -6,8 +6,10 @@ import android.graphics.RectF
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.mlkit.vision.MlKitAnalyzer
+import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetectorOptions
+import com.google.mlkit.vision.pose.Pose
 import com.google.mlkit.vision.pose.PoseDetection
 import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions
 import java.util.concurrent.Executor
@@ -18,31 +20,52 @@ class CoachAnalyzer(
     private val extras: () -> AnalyzerExtras,
     private val onFrame: (signals: com.photocoach.coach.Signals, overlay: OverlayGeometry) -> Unit,
     private val minimumFrameIntervalMs: () -> Long = { 0L },
+    private val poseAndBackgroundEnabled: () -> Boolean = { true },
 ) : ImageAnalysis.Analyzer {
 
-    private val faceDetector = FaceDetection.getClient(
-        coachFaceDetectorOptions(),
-    )
-
+    private val faceDetector = FaceDetection.getClient(coachFaceDetectorOptions())
     private val poseDetector = PoseDetection.getClient(
         PoseDetectorOptions.Builder()
             .setDetectorMode(PoseDetectorOptions.STREAM_MODE)
             .build(),
     )
 
-    private val mlKit = MlKitAnalyzer(
+    private val fullMlKit = MlKitAnalyzer(
         listOf(faceDetector, poseDetector),
-        // This analyzer is bound directly to camera-core ImageAnalysis rather than
-        // CameraController. camera-core cannot provide view-referenced transforms,
-        // so requesting them makes MlKitAnalyzer discard every frame.
         ImageAnalysis.COORDINATE_SYSTEM_ORIGINAL,
         executor,
     ) { result ->
-        val faces = result.getValue(faceDetector) ?: emptyList()
-        val pose = result.getValue(poseDetector)
-        val frame = lastFrame ?: return@MlKitAnalyzer
-        val (w, h) = viewSize()
-        if (w <= 0 || h <= 0) return@MlKitAnalyzer
+        emitResult(
+            faces = result.getValue(faceDetector) ?: emptyList(),
+            pose = result.getValue(poseDetector),
+            backgroundEnabled = true,
+        )
+    }
+
+    private val basicMlKit = MlKitAnalyzer(
+        listOf(faceDetector),
+        ImageAnalysis.COORDINATE_SYSTEM_ORIGINAL,
+        executor,
+    ) { result ->
+        emitResult(
+            faces = result.getValue(faceDetector) ?: emptyList(),
+            pose = null,
+            backgroundEnabled = false,
+        )
+    }
+
+    @Volatile
+    private var lastFrame: AnalysisFrame? = null
+    @Volatile
+    private var lastLensObscured: Boolean = false
+    private val lensObstructionDetector = LensObstructionDetector()
+    private val temporalPoseTracker = TemporalPoseTracker()
+    private var lastAcceptedFrameMs = Long.MIN_VALUE
+
+    private fun emitResult(faces: List<Face>, pose: Pose?, backgroundEnabled: Boolean) {
+        val frame = lastFrame ?: return
+        val (targetWidth, targetHeight) = viewSize()
+        if (targetWidth <= 0 || targetHeight <= 0) return
         val extra = extras()
         val (signals, overlay) = SignalFactory.build(
             faces = faces,
@@ -54,24 +77,23 @@ class CoachAnalyzer(
             hasTelephotoPreset = extra.hasTelephotoPreset,
             focusOnFace = extra.focusOnFace,
             lensObscured = lastLensObscured,
+            handheldStable = extra.handheldStable,
+            backgroundAnalysisEnabled = backgroundEnabled,
         )
-        val temporal = temporalPoseTracker.update(poseMotionSample(pose, frame.timestampMs))
+        val temporal = if (pose == null) {
+            temporalPoseTracker.reset()
+            TemporalPoseSignals()
+        } else {
+            temporalPoseTracker.update(poseMotionSample(pose, frame.timestampMs))
+        }
         onFrame(
             signals.copy(
                 walkingMotionStable = temporal.walkingMotionStable,
                 subjectMotionHigh = temporal.subjectMotionHigh,
             ),
-            overlay.fitCenter(frame.width, frame.height, w, h),
+            overlay.fitCenter(frame.width, frame.height, targetWidth, targetHeight),
         )
     }
-
-    @Volatile
-    private var lastFrame: AnalysisFrame? = null
-    @Volatile
-    private var lastLensObscured: Boolean = false
-    private val lensObstructionDetector = LensObstructionDetector()
-    private val temporalPoseTracker = TemporalPoseTracker()
-    private var lastAcceptedFrameMs = Long.MIN_VALUE
 
     override fun analyze(image: ImageProxy) {
         try {
@@ -90,16 +112,22 @@ class CoachAnalyzer(
             )
             lastFrame = AnalysisFrame(stats, width, height, timestampMs)
             lastLensObscured = lensObstructionDetector.update(stats)
-            mlKit.analyze(image)
+            if (poseAndBackgroundEnabled()) {
+                fullMlKit.analyze(image)
+            } else {
+                temporalPoseTracker.reset()
+                basicMlKit.analyze(image)
+            }
         } catch (_: Exception) {
             image.close()
         }
     }
 
-    override fun getTargetCoordinateSystem(): Int = mlKit.targetCoordinateSystem
+    override fun getTargetCoordinateSystem(): Int = fullMlKit.targetCoordinateSystem
 
     override fun updateTransform(matrix: Matrix?) {
-        mlKit.updateTransform(matrix)
+        fullMlKit.updateTransform(matrix)
+        basicMlKit.updateTransform(matrix)
     }
 
     fun close() {
@@ -108,7 +136,6 @@ class CoachAnalyzer(
         poseDetector.close()
     }
 }
-
 internal fun coachFaceDetectorOptions(): FaceDetectorOptions =
     FaceDetectorOptions.Builder()
         .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
@@ -123,6 +150,7 @@ data class AnalyzerExtras(
     val tiltDegrees: Float,
     val hasTelephotoPreset: Boolean,
     val focusOnFace: Boolean,
+    val handheldStable: Boolean = true,
 )
 
 private data class AnalysisFrame(

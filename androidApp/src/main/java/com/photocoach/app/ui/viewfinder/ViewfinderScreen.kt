@@ -122,6 +122,7 @@ fun ViewfinderScreen(
     onHideFocusControls: (Int) -> Unit,
     onDismissControlMessage: () -> Unit,
     onCreativeStyleChange: (CreativeStyle) -> Unit = {},
+    onCreativeStyleStrengthChange: (Float) -> Unit = {},
     onToggleCurrentStyleFavorite: () -> Unit = {},
     onPoseCategoryChange: (PoseCategory?) -> Unit = {},
     onP1TechniquesEnabledChange: (Boolean) -> Unit = {},
@@ -194,6 +195,7 @@ fun ViewfinderScreen(
                     onRetrySave = onRetrySave,
                     onDiscardSave = onDiscardSave,
                     onCreativeStyleChange = onCreativeStyleChange,
+                    onCreativeStyleStrengthChange = onCreativeStyleStrengthChange,
                     onToggleCurrentStyleFavorite = onToggleCurrentStyleFavorite,
                     onPoseCategoryChange = onPoseCategoryChange,
                     onP1TechniquesEnabledChange = onP1TechniquesEnabledChange,
@@ -240,6 +242,7 @@ fun ViewfinderScreen(
                     onRetrySave = onRetrySave,
                     onDiscardSave = onDiscardSave,
                     onCreativeStyleChange = onCreativeStyleChange,
+                    onCreativeStyleStrengthChange = onCreativeStyleStrengthChange,
                     onToggleCurrentStyleFavorite = onToggleCurrentStyleFavorite,
                     onPoseCategoryChange = onPoseCategoryChange,
                     onP1TechniquesEnabledChange = onP1TechniquesEnabledChange,
@@ -544,6 +547,7 @@ private fun OperationPanel(
     onRetrySave: () -> Unit,
     onDiscardSave: () -> Unit,
     onCreativeStyleChange: (CreativeStyle) -> Unit,
+    onCreativeStyleStrengthChange: (Float) -> Unit,
     onToggleCurrentStyleFavorite: () -> Unit,
     onPoseCategoryChange: (PoseCategory?) -> Unit,
     onP1TechniquesEnabledChange: (Boolean) -> Unit,
@@ -650,6 +654,7 @@ private fun OperationPanel(
                 CreativeCaptureControl(
                     ui = ui,
                     onStyleChange = onCreativeStyleChange,
+                    onStyleStrengthChange = onCreativeStyleStrengthChange,
                     onToggleCurrentStyleFavorite = onToggleCurrentStyleFavorite,
                     onPoseCategoryChange = onPoseCategoryChange,
                     onP1TechniquesEnabledChange = onP1TechniquesEnabledChange,
@@ -709,6 +714,7 @@ private fun LatestPhoto(uri: String?, onClick: (String) -> Unit) {
 private fun CreativeCaptureControl(
     ui: ViewfinderUi,
     onStyleChange: (CreativeStyle) -> Unit,
+    onStyleStrengthChange: (Float) -> Unit,
     onToggleCurrentStyleFavorite: () -> Unit,
     onPoseCategoryChange: (PoseCategory?) -> Unit,
     onP1TechniquesEnabledChange: (Boolean) -> Unit,
@@ -738,27 +744,52 @@ private fun CreativeCaptureControl(
             onDismissRequest = { expanded = false },
             modifier = Modifier.width(320.dp),
         ) {
-            ui.styleDiscovery.orderedStyles.forEach { style ->
-                val recommendation = ui.styleDiscovery.recommendations.firstOrNull { it.style == style }
-                val preference = when {
-                    style in ui.styleFavorites -> "已收藏"
-                    style in ui.styleRecent -> "最近使用"
-                    else -> null
-                }
-                DropdownMenuItem(
-                    text = {
-                        Column {
-                            Text(style.label)
-                            Text(
-                                recommendation?.let { "推荐 ${(it.suggestedStrength * 100).roundToInt()}% · ${it.reason}" }
-                                    ?: preference ?: style.description,
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                        }
-                    },
-                    leadingIcon = { Checkbox(checked = style == ui.creativeStyle, onCheckedChange = null) },
-                    onClick = { onStyleChange(style) },
-                    modifier = Modifier.testTag("creative_style_${style.name.lowercase()}"),
+            StyleMenuItem(
+                style = CreativeStyle.ORIGINAL,
+                selected = ui.creativeStyle,
+                detail = "始终第一；不做颜色处理",
+                tag = "creative_style_original",
+                onStyleChange = onStyleChange,
+            )
+            StyleMenuSection(
+                title = "推荐",
+                styles = ui.styleDiscovery.recommendations.map { it.style },
+                ui = ui,
+                tagPrefix = "recommended",
+                onStyleChange = onStyleChange,
+            )
+            StyleMenuSection(
+                title = "最近",
+                styles = ui.styleRecent,
+                ui = ui,
+                tagPrefix = "recent",
+                onStyleChange = onStyleChange,
+            )
+            StyleMenuSection(
+                title = "收藏",
+                styles = ui.styleFavorites.sortedBy(CreativeStyle::ordinal),
+                ui = ui,
+                tagPrefix = "favorite",
+                onStyleChange = onStyleChange,
+            )
+            StyleMenuSection(
+                title = "全部",
+                styles = CreativeStyle.entries.filterNot { it == CreativeStyle.ORIGINAL },
+                ui = ui,
+                tagPrefix = "all",
+                onStyleChange = onStyleChange,
+            )
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text(
+                    if (ui.creativeStyle == CreativeStyle.ORIGINAL) "强度：原图" else "强度：${(ui.creativeStyleStrength * 100).roundToInt()}%",
+                    style = MaterialTheme.typography.labelMedium,
+                )
+                Slider(
+                    value = ui.creativeStyleStrength,
+                    onValueChange = onStyleStrengthChange,
+                    enabled = ui.creativeStyle != CreativeStyle.ORIGINAL,
+                    valueRange = 0f..1f,
+                    modifier = Modifier.testTag("creative_style_strength"),
                 )
             }
             DropdownMenuItem(
@@ -885,6 +916,71 @@ private fun CreativeCaptureControl(
             )
         }
     }
+}
+
+@Composable
+private fun StyleMenuSection(
+    title: String,
+    styles: List<CreativeStyle>,
+    ui: ViewfinderUi,
+    tagPrefix: String,
+    onStyleChange: (CreativeStyle) -> Unit,
+) {
+    Text(
+        title,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+    )
+    if (styles.isEmpty()) {
+        Text(
+            "暂无",
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        )
+        return
+    }
+    styles.distinct().filterNot { it == CreativeStyle.ORIGINAL }.forEach { style ->
+        val recommendation = ui.styleDiscovery.recommendations.firstOrNull { it.style == style }
+        val detail = when {
+            recommendation != null -> "建议 ${(recommendation.suggestedStrength * 100).roundToInt()}% · ${recommendation.reason}"
+            tagPrefix == "recent" -> "最近使用"
+            tagPrefix == "favorite" -> "已收藏"
+            else -> style.description
+        }
+        StyleMenuItem(
+            style = style,
+            selected = ui.creativeStyle,
+            detail = detail,
+            tag = if (tagPrefix == "all") {
+                "creative_style_${style.name.lowercase()}"
+            } else {
+                "creative_style_${tagPrefix}_${style.name.lowercase()}"
+            },
+            onStyleChange = onStyleChange,
+        )
+    }
+}
+
+@Composable
+private fun StyleMenuItem(
+    style: CreativeStyle,
+    selected: CreativeStyle,
+    detail: String,
+    tag: String,
+    onStyleChange: (CreativeStyle) -> Unit,
+) {
+    DropdownMenuItem(
+        text = {
+            Column {
+                Text(style.label)
+                Text(detail, style = MaterialTheme.typography.labelSmall)
+            }
+        },
+        leadingIcon = { Checkbox(checked = style == selected, onCheckedChange = null) },
+        onClick = { onStyleChange(style) },
+        modifier = Modifier.testTag(tag),
+    )
 }
 
 @Composable
