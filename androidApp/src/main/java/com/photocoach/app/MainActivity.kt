@@ -36,6 +36,7 @@ import com.photocoach.app.camera.CameraBinder
 import com.photocoach.app.camera.CameraModePreference
 import com.photocoach.app.camera.CapturePriority
 import com.photocoach.app.camera.CaptureSpec
+import com.photocoach.app.camera.ThermalStateMonitor
 import com.photocoach.app.creative.ParameterAction
 import com.photocoach.app.creative.ParameterSuggestion
 import com.photocoach.app.tts.GuidanceTts
@@ -52,6 +53,7 @@ class MainActivity : ComponentActivity() {
     private val viewModel: AppViewModel by viewModels()
     private lateinit var camera: CameraBinder
     private lateinit var tts: GuidanceTts
+    private lateinit var thermalMonitor: ThermalStateMonitor
     private var previewView: PreviewView? = null
     private var cameraConsented by mutableStateOf(false)
     private var permissionState by mutableStateOf(PermissionState.UNKNOWN)
@@ -73,6 +75,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         camera = CameraBinder(this)
+        thermalMonitor = ThermalStateMonitor(this) { level ->
+            camera.updateThermalLevel(level)
+            viewModel.onThermalLevel(level)
+            if (permissionState == PermissionState.GRANTED) prepareAndRebind()
+        }.also { it.start() }
         tts = GuidanceTts(this)
         cameraConsented = prefs().getBoolean(PREF_CAMERA_CONSENT, false)
         if (cameraConsented) requestCameraPermission()
@@ -192,6 +199,9 @@ class MainActivity : ComponentActivity() {
                         onHideFocusControls = viewModel::hideFocusControls,
                         onDismissControlMessage = viewModel::dismissControlMessage,
                         onCreativeStyleChange = viewModel::setCreativeStyle,
+                        onToggleCurrentStyleFavorite = viewModel::toggleCurrentStyleFavorite,
+                        onPoseCategoryChange = viewModel::selectPoseCategory,
+                        onP1TechniquesEnabledChange = viewModel::setP1TechniquesEnabled,
                         onThreeShotBurstChange = viewModel::setThreeShotBurstEnabled,
                         onSaveStrategyChange = viewModel::setSaveStrategy,
                         onDerivativeQualityChange = viewModel::setDerivativeQuality,
@@ -241,6 +251,7 @@ class MainActivity : ComponentActivity() {
         cancelScheduledCapture()
         rebindJob?.cancel()
         camera.release()
+        thermalMonitor.close()
         tts.shutdown()
         super.onDestroy()
     }

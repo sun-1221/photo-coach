@@ -73,6 +73,7 @@ import com.photocoach.app.camera.CapturePriority
 import com.photocoach.app.camera.CaptureTimer
 import com.photocoach.app.camera.DerivativeQuality
 import com.photocoach.app.camera.SaveStrategy
+import com.photocoach.app.camera.ThermalPolicy
 import com.photocoach.app.creative.CreativeColorMatrix
 import com.photocoach.app.creative.CreativeStyle
 import com.photocoach.app.creative.EditAdjustment
@@ -82,6 +83,7 @@ import com.photocoach.coach.Audience
 import com.photocoach.coach.GuidanceStage
 import com.photocoach.coach.ShotIntent
 import com.photocoach.coach.SuggestedMode
+import com.photocoach.coach.PoseCategory
 import kotlinx.coroutines.delay
 import java.util.IdentityHashMap
 import kotlin.math.abs
@@ -120,6 +122,9 @@ fun ViewfinderScreen(
     onHideFocusControls: (Int) -> Unit,
     onDismissControlMessage: () -> Unit,
     onCreativeStyleChange: (CreativeStyle) -> Unit = {},
+    onToggleCurrentStyleFavorite: () -> Unit = {},
+    onPoseCategoryChange: (PoseCategory?) -> Unit = {},
+    onP1TechniquesEnabledChange: (Boolean) -> Unit = {},
     onThreeShotBurstChange: (Boolean) -> Unit = {},
     onSaveStrategyChange: (SaveStrategy) -> Unit = {},
     onDerivativeQualityChange: (DerivativeQuality) -> Unit = {},
@@ -189,6 +194,9 @@ fun ViewfinderScreen(
                     onRetrySave = onRetrySave,
                     onDiscardSave = onDiscardSave,
                     onCreativeStyleChange = onCreativeStyleChange,
+                    onToggleCurrentStyleFavorite = onToggleCurrentStyleFavorite,
+                    onPoseCategoryChange = onPoseCategoryChange,
+                    onP1TechniquesEnabledChange = onP1TechniquesEnabledChange,
                     onThreeShotBurstChange = onThreeShotBurstChange,
                     onSaveStrategyChange = onSaveStrategyChange,
                     onDerivativeQualityChange = onDerivativeQualityChange,
@@ -232,6 +240,9 @@ fun ViewfinderScreen(
                     onRetrySave = onRetrySave,
                     onDiscardSave = onDiscardSave,
                     onCreativeStyleChange = onCreativeStyleChange,
+                    onToggleCurrentStyleFavorite = onToggleCurrentStyleFavorite,
+                    onPoseCategoryChange = onPoseCategoryChange,
+                    onP1TechniquesEnabledChange = onP1TechniquesEnabledChange,
                     onThreeShotBurstChange = onThreeShotBurstChange,
                     onSaveStrategyChange = onSaveStrategyChange,
                     onDerivativeQualityChange = onDerivativeQualityChange,
@@ -360,12 +371,20 @@ private fun PreviewPane(
                 factory = { context ->
                     PreviewView(context).apply {
                         implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                        scaleType = PreviewView.ScaleType.FIT_CENTER
+                        // Match CameraBinder's FILL_CENTER ViewPort so the long-screen
+                        // viewfinder is filled without letterboxing the 4:3 preview.
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
                         onPreviewReady(this)
                     }
                 },
                 update = { preview ->
-                    previewEffectError = applyPreviewStyle(preview, ui.creativeStyle)
+                    val thermalPolicy = ThermalPolicy.forLevel(ui.thermalLevel)
+                    previewEffectError = if (thermalPolicy.stylePreviewEnabled) {
+                        applyPreviewStyle(preview, ui.creativeStyle, ui.creativeStyleStrength)
+                    } else {
+                        applyPreviewStyle(preview, CreativeStyle.ORIGINAL, 0f)
+                        if (ui.creativeStyle == CreativeStyle.ORIGINAL) null else "设备升温，已暂停实时风格预览"
+                    }
                 },
             )
             CoachOverlay(
@@ -525,6 +544,9 @@ private fun OperationPanel(
     onRetrySave: () -> Unit,
     onDiscardSave: () -> Unit,
     onCreativeStyleChange: (CreativeStyle) -> Unit,
+    onToggleCurrentStyleFavorite: () -> Unit,
+    onPoseCategoryChange: (PoseCategory?) -> Unit,
+    onP1TechniquesEnabledChange: (Boolean) -> Unit,
     onThreeShotBurstChange: (Boolean) -> Unit,
     onSaveStrategyChange: (SaveStrategy) -> Unit,
     onDerivativeQualityChange: (DerivativeQuality) -> Unit,
@@ -628,6 +650,9 @@ private fun OperationPanel(
                 CreativeCaptureControl(
                     ui = ui,
                     onStyleChange = onCreativeStyleChange,
+                    onToggleCurrentStyleFavorite = onToggleCurrentStyleFavorite,
+                    onPoseCategoryChange = onPoseCategoryChange,
+                    onP1TechniquesEnabledChange = onP1TechniquesEnabledChange,
                     onBurstChange = onThreeShotBurstChange,
                     onSaveStrategyChange = onSaveStrategyChange,
                     onDerivativeQualityChange = onDerivativeQualityChange,
@@ -684,6 +709,9 @@ private fun LatestPhoto(uri: String?, onClick: (String) -> Unit) {
 private fun CreativeCaptureControl(
     ui: ViewfinderUi,
     onStyleChange: (CreativeStyle) -> Unit,
+    onToggleCurrentStyleFavorite: () -> Unit,
+    onPoseCategoryChange: (PoseCategory?) -> Unit,
+    onP1TechniquesEnabledChange: (Boolean) -> Unit,
     onBurstChange: (Boolean) -> Unit,
     onSaveStrategyChange: (SaveStrategy) -> Unit,
     onDerivativeQualityChange: (DerivativeQuality) -> Unit,
@@ -710,14 +738,49 @@ private fun CreativeCaptureControl(
             onDismissRequest = { expanded = false },
             modifier = Modifier.width(320.dp),
         ) {
-            CreativeStyle.entries.forEach { style ->
+            ui.styleDiscovery.orderedStyles.forEach { style ->
+                val recommendation = ui.styleDiscovery.recommendations.firstOrNull { it.style == style }
+                val preference = when {
+                    style in ui.styleFavorites -> "已收藏"
+                    style in ui.styleRecent -> "最近使用"
+                    else -> null
+                }
                 DropdownMenuItem(
-                    text = { SettingText(style.label, style.description) },
+                    text = {
+                        Column {
+                            Text(style.label)
+                            Text(
+                                recommendation?.let { "推荐 ${(it.suggestedStrength * 100).roundToInt()}% · ${it.reason}" }
+                                    ?: preference ?: style.description,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    },
                     leadingIcon = { Checkbox(checked = style == ui.creativeStyle, onCheckedChange = null) },
                     onClick = { onStyleChange(style) },
                     modifier = Modifier.testTag("creative_style_${style.name.lowercase()}"),
                 )
             }
+            DropdownMenuItem(
+                text = { Text(if (ui.creativeStyle in ui.styleFavorites) "取消收藏当前风格" else "收藏当前风格") },
+                enabled = ui.creativeStyle != CreativeStyle.ORIGINAL,
+                onClick = onToggleCurrentStyleFavorite,
+                modifier = Modifier.testTag("creative_style_favorite"),
+            )
+            DropdownMenuItem(
+                text = { SettingText("姿势灵感", ui.selectedPoseCategory?.poseLabel() ?: "关闭") },
+                onClick = {
+                    val values = listOf<PoseCategory?>(null) + PoseCategory.entries
+                    onPoseCategoryChange(values[(values.indexOf(ui.selectedPoseCategory) + 1).mod(values.size)])
+                },
+                modifier = Modifier.testTag("pose_category"),
+            )
+            DropdownMenuItem(
+                text = { SettingText("摄影技巧", if (ui.p1TechniquesEnabled) "开启" else "关闭") },
+                leadingIcon = { Checkbox(checked = ui.p1TechniquesEnabled, onCheckedChange = onP1TechniquesEnabledChange) },
+                onClick = { onP1TechniquesEnabledChange(!ui.p1TechniquesEnabled) },
+                modifier = Modifier.testTag("p1_techniques"),
+            )
             DropdownMenuItem(
                 text = {
                     Column {
@@ -1095,11 +1158,11 @@ private fun applyImageColorMatrix(image: ImageView, matrix: FloatArray?): String
     error.message ?: "无法显示创意效果"
 }
 
-private fun applyPreviewStyle(preview: PreviewView, style: CreativeStyle): String? {
+private fun applyPreviewStyle(preview: PreviewView, style: CreativeStyle, strength: Float): String? {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
         return if (style == CreativeStyle.ORIGINAL) null else "当前系统仅显示原图预览"
     }
-    val matrix = CreativeColorMatrix.forSelection(style)
+    val matrix = CreativeColorMatrix.forSelection(style, EditAdjustment(styleStrength = strength))
     val applied = applyEffectWithOriginalFallback(
         applyEffect = {
             preview.setRenderEffect(
@@ -1407,6 +1470,7 @@ private fun guidanceText(ui: ViewfinderUi): String {
         is GuidanceStage.Observing -> "正在观察画面"
         is GuidanceStage.Action -> promptText(stage.cue.audience, stage.cue.text, ui.subjectCaptionsEnabled)
         is GuidanceStage.Ready -> when {
+            ui.poseCueText != null -> ui.poseCueText
             ui.subjectCaptionsEnabled && stage.retainedSubjectCue != null ->
                 checkNotNull(stage.retainedSubjectCue).text
             ui.guidance.canRequestOptional -> "发现新建议，可再优化"
@@ -1417,6 +1481,15 @@ private fun guidanceText(ui: ViewfinderUi): String {
         is GuidanceStage.Saved -> "已保存到系统相册"
         is GuidanceStage.SaveFailed -> stage.message
     }
+}
+
+private fun PoseCategory.poseLabel(): String = when (this) {
+    PoseCategory.CLOSE_UP -> "特写"
+    PoseCategory.HALF_BODY -> "半身"
+    PoseCategory.FULL_BODY -> "全身"
+    PoseCategory.SEATED -> "坐姿"
+    PoseCategory.WALKING -> "走动"
+    PoseCategory.SOLO_INTERACTION -> "单人互动"
 }
 
 private fun hasActiveLensWarning(ui: ViewfinderUi): Boolean =

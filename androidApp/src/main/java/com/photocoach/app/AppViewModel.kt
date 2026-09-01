@@ -26,6 +26,8 @@ import com.photocoach.app.camera.DerivativeQuality
 import com.photocoach.app.camera.SaveStrategy
 import com.photocoach.app.camera.SaveSnapshot
 import com.photocoach.app.camera.SaveStage
+import com.photocoach.app.camera.ThermalLevel
+import com.photocoach.app.camera.ThermalPolicy
 import com.photocoach.app.camera.QuickFocalPreset
 import com.photocoach.app.camera.ZoomCapability
 import com.photocoach.app.camera.CapturedPhoto
@@ -45,10 +47,19 @@ import com.photocoach.app.creative.ParameterCoach
 import com.photocoach.app.creative.ParameterContext
 import com.photocoach.app.creative.ParameterSuggestion
 import com.photocoach.app.creative.PhotoQualityScore
+import com.photocoach.app.creative.CreativeSceneTag
+import com.photocoach.app.creative.StyleDiscovery
+import com.photocoach.app.creative.StylePreferenceStore
+import com.photocoach.app.creative.StyleProfiles
+import com.photocoach.app.creative.StyleRecommendationEngine
+import com.photocoach.app.creative.StyleRecommendationInput
+import com.photocoach.app.creative.NormalizedFaceRegion
 import com.photocoach.app.research.ResearchEvent
 import com.photocoach.app.research.ResearchEventLogger
 import com.photocoach.coach.CoachEngine
 import com.photocoach.coach.CoachOutput
+import com.photocoach.coach.Cue
+import com.photocoach.coach.Channel
 import com.photocoach.coach.Audience
 import com.photocoach.coach.CueId
 import com.photocoach.coach.GuidanceSession
@@ -58,6 +69,12 @@ import com.photocoach.coach.SceneStartParams
 import com.photocoach.coach.ShotIntent
 import com.photocoach.coach.Signals
 import com.photocoach.coach.SuggestedMode
+import com.photocoach.coach.PoseCategory
+import com.photocoach.coach.PoseGuidanceReducer
+import com.photocoach.coach.PoseGuidanceState
+import com.photocoach.coach.PhotoTechniqueEngine
+import com.photocoach.coach.TechniqueCapabilities
+import com.photocoach.coach.TechniqueCategory
 import kotlin.math.roundToInt
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -157,6 +174,10 @@ data class ViewfinderUi(
     val sceneApply: SceneApplyRequest? = null,
     val shutterPulse: Int = 0,
     val creativeStyle: CreativeStyle = CreativeStyle.ORIGINAL,
+    val creativeStyleStrength: Float = 0f,
+    val styleDiscovery: StyleDiscovery = StyleDiscovery(CreativeStyle.entries, emptyList()),
+    val styleFavorites: Set<CreativeStyle> = emptySet(),
+    val styleRecent: List<CreativeStyle> = emptyList(),
     val threeShotBurstEnabled: Boolean = false,
     val saveStrategy: SaveStrategy = SaveStrategy.ORIGINAL_WITH_RECIPE,
     val derivativeQuality: DerivativeQuality = DerivativeQuality.FULL,
@@ -169,6 +190,11 @@ data class ViewfinderUi(
     val parameterSuggestions: List<ParameterSuggestion> = emptyList(),
     val creativeResult: CreativeResultUi? = null,
     val creativeResultVisible: Boolean = false,
+    val thermalLevel: ThermalLevel = ThermalLevel.UNKNOWN,
+    val thermalMessage: String? = null,
+    val selectedPoseCategory: PoseCategory? = null,
+    val poseCueText: String? = null,
+    val p1TechniquesEnabled: Boolean = false,
 )
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
@@ -176,7 +202,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val guidance = GuidanceSession()
     private val eventLogger = ResearchEventLogger(File(application.filesDir, "research/p-minus-one-events.jsonl"))
     private val settingsStore = CameraSettingsStore(application)
+    private val stylePreferenceStore = StylePreferenceStore(application)
     private val initialSettings = settingsStore.load()
+    private val initialStylePreferences = stylePreferenceStore.load()
     private val sessionStartedAtMs = now()
     private val sensorManager = application.getSystemService(SensorManager::class.java)
     private val gravity = FloatArray(3)
@@ -189,6 +217,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val faceFocusSignal = FaceFocusSignalState()
     private var lastLoggedStage = ""
     private val burstSession = BurstSession()
+    private val poseGuidance = PoseGuidanceReducer()
     private var captureExpectedCount = 1
     private var captureStyle = CreativeStyle.ORIGINAL
     private var activeCaptureId: CaptureId? = null
@@ -213,6 +242,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             capturePriority = initialSettings.capturePriority,
             modePreference = initialSettings.modePreference,
             creativeStyle = initialSettings.creativeStyle,
+            creativeStyleStrength = StyleProfiles.forStyle(initialSettings.creativeStyle).suggestedStrength,
+            styleFavorites = initialStylePreferences.favorites,
+            styleRecent = initialStylePreferences.recent,
             threeShotBurstEnabled = initialSettings.threeShotBurstEnabled,
             saveStrategy = initialSettings.saveStrategy,
             derivativeQuality = initialSettings.derivativeQuality,
@@ -317,13 +349,35 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
             guidance.autoSelectIntent(autoIntent)
         }
-        if (nowMs - lastEvalAtMs < ANALYSIS_INTERVAL_MS) {
+        val analysisInterval = maxOf(ANALYSIS_INTERVAL_MS, ThermalPolicy.forLevel(_ui.value.thermalLevel).analysisIntervalMs)
+        if (nowMs - lastEvalAtMs < analysisInterval) {
             _ui.update { it.copy(overlay = overlay, guidance = guidance.snapshot()) }
             return
         }
         lastEvalAtMs = nowMs
         val snapshot = guidance.snapshot()
-        val raw = engine.evaluate(signals, snapshot.intent)
+        val currentUi = _ui.value
+        val baseRaw = engine.evaluate(signals, snapshot.intent)
+        val technique = if (currentUi.p1TechniquesEnabled) PhotoTechniqueEngine.suggest(
+            signals,
+            TechniqueCapabilities(
+                calibratedTelephotoLabel = currentUi.focalPresets.firstOrNull { it.isQuickControlAvailable && !it.isDefault }?.label,
+                burstEnabled = currentUi.threeShotBurstEnabled,
+            ),
+        ) else null
+        val raw = if (technique == null) baseRaw else baseRaw.copy(
+            cues = (baseRaw.cues + Cue(
+                id = CueId.P1_TECHNIQUE,
+                text = technique.text,
+                audience = technique.audience,
+                channel = when (technique.category) {
+                    TechniqueCategory.LIGHT, TechniqueCategory.NIGHT -> Channel.LIGHT
+                    TechniqueCategory.MOTION -> Channel.POSE
+                    else -> Channel.COMPOSITION
+                },
+                priority = 75,
+            )).distinctBy(Cue::id).sortedByDescending(Cue::priority).take(3),
+        )
         val filtered = if (nowMs < controlQuietUntilMs) {
             raw.copy(
                 cues = raw.cues.filterNot {
@@ -334,8 +388,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             raw
         }
         guidance.onCandidates(filtered, signals, nowMs)
+        val poseState = if (_ui.value.selectedPoseCategory != null) poseGuidance.update(signals, nowMs) else PoseGuidanceState.Disabled
         maybeQueueSceneStart(filtered)
-        val currentUi = _ui.value
         val parameterSuggestions = ParameterCoach.suggest(
             signals = signals,
             intent = snapshot.intent,
@@ -361,6 +415,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 aeAfLocked = currentUi.aeAfLocked,
             ),
         )
+        val styleDiscovery = StyleRecommendationEngine.discover(
+            StyleRecommendationInput(
+                scene = when {
+                    signals.meanLuma?.let { it < 60f } == true -> CreativeSceneTag.NIGHT
+                    signals.faceCount == 1 -> CreativeSceneTag.PORTRAIT
+                    signals.hasLargeEnvironment -> CreativeSceneTag.TRAVEL
+                    else -> CreativeSceneTag.UNKNOWN
+                },
+                meanLuma = signals.meanLuma,
+                faceCount = signals.faceCount,
+                highlightRatio = signals.highlightRatio,
+                recent = currentUi.styleRecent,
+                favorites = currentUi.styleFavorites,
+            ),
+        )
         _ui.update {
             it.copy(
                 coach = filtered,
@@ -372,6 +441,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     null
                 },
                 parameterSuggestions = parameterSuggestions,
+                styleDiscovery = styleDiscovery,
+                poseCueText = (poseState as? PoseGuidanceState.CueActive)?.cue?.text,
             )
         }
         logStageIfChanged()
@@ -538,15 +609,42 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setCreativeStyle(style: CreativeStyle) {
         if (_ui.value.guidance.stage is GuidanceStage.Capturing) return
+        val preferences = stylePreferenceStore.recordUse(style)
         _ui.update { state ->
             val result = state.creativeResult
+            val suggested = state.styleDiscovery.recommendations.firstOrNull { it.style == style }?.suggestedStrength
+                ?: StyleProfiles.forStyle(style).suggestedStrength
             state.copy(
                 creativeStyle = style,
+                creativeStyleStrength = suggested,
+                styleRecent = preferences.recent,
+                styleFavorites = preferences.favorites,
                 creativeResult = result?.copy(message = null),
-                controlMessage = "已选择${style.label}；原片仍会保留",
+                controlMessage = "已选择${style.label}，建议强度 ${(suggested * 100).roundToInt()}%；原片仍会保留",
             )
         }
         persistSettings()
+    }
+
+    fun selectPoseCategory(category: PoseCategory?) {
+        if (_ui.value.guidance.stage is GuidanceStage.Capturing) return
+        if (category == null) poseGuidance.disable() else poseGuidance.select(category, now())
+        _ui.update { it.copy(selectedPoseCategory = category, poseCueText = null,
+            controlMessage = category?.let { "已选择${it.label()}姿势；作为可选单人灵感，不增加必做步骤" } ?: "姿势灵感已关闭") }
+    }
+
+    fun setP1TechniquesEnabled(enabled: Boolean) {
+        _ui.update { it.copy(p1TechniquesEnabled = enabled,
+            controlMessage = if (enabled) "摄影技巧已开启；只使用可观察证据和已公开能力" else "摄影技巧已关闭") }
+    }
+
+    fun toggleCurrentStyleFavorite() {
+        val style = _ui.value.creativeStyle
+        if (style == CreativeStyle.ORIGINAL) { showControlMessage("原图始终排第一，无需收藏"); return }
+        val favorite = style !in _ui.value.styleFavorites
+        val preferences = stylePreferenceStore.setFavorite(style, favorite)
+        _ui.update { it.copy(styleFavorites = preferences.favorites, styleRecent = preferences.recent,
+            controlMessage = if (favorite) "已收藏${style.label}" else "已取消收藏${style.label}") }
     }
 
     fun setThreeShotBurstEnabled(enabled: Boolean) {
@@ -590,6 +688,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         persistSettings()
+    }
+
+    fun onThermalLevel(level: ThermalLevel) {
+        val policy = ThermalPolicy.forLevel(level)
+        _ui.update {
+            it.copy(
+                thermalLevel = level,
+                thermalMessage = when (level) {
+                    ThermalLevel.NORMAL -> null
+                    ThermalLevel.LIGHT -> "设备轻微升温，已降低创意预览负载"
+                    ThermalLevel.MODERATE -> "设备升温，已降低姿势与背景分析频率"
+                    ThermalLevel.SEVERE -> "设备温度较高，已暂停新 Live 和连拍"
+                    ThermalLevel.CRITICAL -> "设备温度过高，已暂停非必要创意处理"
+                    ThermalLevel.UNKNOWN -> "无法读取热状态，创意功能按保守策略运行"
+                },
+                controlMessage = if (level == ThermalLevel.NORMAL) it.controlMessage else when {
+                    !policy.allowNewLive || !policy.allowNewBurst -> "温度降级中；普通预览、快门和原片保存继续可用"
+                    else -> it.controlMessage
+                },
+            )
+        }
     }
 
     fun toggleFlash() {
@@ -717,7 +836,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun beginCapture(): Boolean {
         val accepted = guidance.onShutter(now())
         if (accepted) {
-            captureExpectedCount = if (_ui.value.threeShotBurstEnabled) BurstSession.SHOT_COUNT else 1
+            val thermalPolicy = ThermalPolicy.forLevel(_ui.value.thermalLevel)
+            captureExpectedCount = if (_ui.value.threeShotBurstEnabled && thermalPolicy.allowNewBurst) BurstSession.SHOT_COUNT else 1
             captureStyle = _ui.value.creativeStyle
             activeCaptureId = CaptureIdentity.create()
             captureTakenAtMillis = System.currentTimeMillis()
@@ -748,14 +868,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun activeCaptureSpec(): CaptureSpec? {
         val captureId = activeCaptureId ?: return null
         val state = _ui.value
+        val overlay = state.overlay
+        val face = overlay?.faceRects?.singleOrNull()
+        val portraitRegion = if (
+            lastSignals.faceCount == 1 && lastSignals.faceReliable && face != null &&
+            overlay.canvasWidth > 0 && overlay.canvasHeight > 0
+        ) runCatching {
+            NormalizedFaceRegion(
+                (face.left / overlay.canvasWidth).coerceIn(0f, 1f),
+                (face.top / overlay.canvasHeight).coerceIn(0f, 1f),
+                (face.right / overlay.canvasWidth).coerceIn(0f, 1f),
+                (face.bottom / overlay.canvasHeight).coerceIn(0f, 1f),
+            )
+        }.getOrNull() else null
         return CaptureSpec(
             captureId = captureId,
             sequence = capturedPhotos.size + 1,
             takenAtMillis = captureTakenAtMillis,
             style = captureStyle,
+            edit = EditAdjustment(styleStrength = state.creativeStyleStrength),
             saveStrategy = state.saveStrategy,
             derivativeQuality = state.derivativeQuality,
-            livePhotoRequested = state.livePhotoEnabled,
+            livePhotoRequested = state.livePhotoEnabled && ThermalPolicy.forLevel(state.thermalLevel).allowNewLive,
+            portraitRegion = portraitRegion,
         )
     }
 
@@ -904,6 +1039,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun beginCreativeExport(): CreativeExportRequest? {
         val result = _ui.value.creativeResult ?: return null
         if (result.exportInProgress) return null
+        if (!ThermalPolicy.forLevel(_ui.value.thermalLevel).allowCreativeExport) {
+            _ui.update { it.copy(creativeResult = result.copy(message = "设备温度过高，暂不开始新的效果导出；原片不受影响")) }
+            return null
+        }
         _ui.update { it.copy(creativeResult = result.copy(exportInProgress = true, message = "正在另存副本")) }
         return CreativeExportRequest(
             source = result.selectedPhoto.originalUri.toUri(),
@@ -1108,6 +1247,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         private const val ANALYSIS_INTERVAL_MS = 300L
         private const val CONTROL_QUIET_MS = 3_000L
     }
+}
+
+private fun PoseCategory.label(): String = when (this) {
+    PoseCategory.CLOSE_UP -> "特写"
+    PoseCategory.HALF_BODY -> "半身"
+    PoseCategory.FULL_BODY -> "全身"
+    PoseCategory.SEATED -> "坐姿"
+    PoseCategory.WALKING -> "走动"
+    PoseCategory.SOLO_INTERACTION -> "单人互动"
 }
 
 private data class AnalyzedFrame(
