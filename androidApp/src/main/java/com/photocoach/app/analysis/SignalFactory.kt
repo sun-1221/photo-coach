@@ -13,6 +13,8 @@ data class OverlayGeometry(
     val faceRects: List<RectF>,
     val posePoints: List<PointF>,
     val showSilhouette: Boolean,
+    val canvasWidth: Int = 0,
+    val canvasHeight: Int = 0,
 )
 
 object SignalFactory {
@@ -62,7 +64,15 @@ object SignalFactory {
                     rightEar = sample(pose, PoseLandmark.RIGHT_EAR),
                     leftWrist = sample(pose, PoseLandmark.LEFT_WRIST),
                     rightWrist = sample(pose, PoseLandmark.RIGHT_WRIST),
+                    leftElbow = sample(pose, PoseLandmark.LEFT_ELBOW),
+                    rightElbow = sample(pose, PoseLandmark.RIGHT_ELBOW),
+                    leftKnee = sample(pose, PoseLandmark.LEFT_KNEE),
+                    rightKnee = sample(pose, PoseLandmark.RIGHT_KNEE),
+                    leftAnkle = sample(pose, PoseLandmark.LEFT_ANKLE),
+                    rightAnkle = sample(pose, PoseLandmark.RIGHT_ANKLE),
                     faceYawDegrees = largest?.headEulerAngleY,
+                    frameWidth = viewWidth.toFloat(),
+                    frameHeight = viewHeight.toFloat(),
                 ),
             )
         } else {
@@ -104,6 +114,17 @@ object SignalFactory {
             skyOverexposed = stats.topMean > 200f,
             subjectCutOff = subjectCutOff,
             lensObscured = lensObscured,
+            faceReliable = faces.size == 1,
+            poseReliable = poseOk,
+            anklesVisible = poseSignals.anklesVisible,
+            anklesNearBottomEdge = poseSignals.anklesNearBottomEdge,
+            jointsNearFrameEdge = poseSignals.jointsNearFrameEdge,
+            atLeastOneHandOutsideTorso = poseSignals.atLeastOneHandOutsideTorso,
+            seatedCandidate = poseSignals.seatedCandidate,
+            torsoUpright = poseSignals.torsoUpright,
+            walkingCandidate = poseSignals.fullBodyVisible,
+            meanLuma = stats.meanY,
+            highlightRatio = stats.highlightRatio,
         )
         val geometry = OverlayGeometry(
             faceRects = faces.map { RectF(it.boundingBox) },
@@ -141,4 +162,28 @@ object SignalFactory {
             landmark(pose, type)?.takeIf(::visible)?.let { PointF(it.position.x, it.position.y) }
         }
     }
+}
+
+internal fun poseMotionSample(pose: Pose?, timestampMs: Long): PoseMotionSample? {
+    if (pose == null) return null
+    fun visible(type: Int): PoseLandmark? = pose.getPoseLandmark(type)?.takeIf { it.inFrameLikelihood >= 0.5f }
+    val leftHip = visible(PoseLandmark.LEFT_HIP) ?: return null
+    val rightHip = visible(PoseLandmark.RIGHT_HIP) ?: return null
+    val leftAnkle = visible(PoseLandmark.LEFT_ANKLE) ?: return null
+    val rightAnkle = visible(PoseLandmark.RIGHT_ANKLE) ?: return null
+    val leftShoulder = visible(PoseLandmark.LEFT_SHOULDER) ?: return null
+    val rightShoulder = visible(PoseLandmark.RIGHT_SHOULDER) ?: return null
+    val reference = kotlin.math.hypot(
+        leftShoulder.position.x - rightShoulder.position.x,
+        leftShoulder.position.y - rightShoulder.position.y,
+    )
+    if (reference < 1f) return null
+    return PoseMotionSample(
+        timestampMs = timestampMs,
+        centerX = (leftHip.position.x + rightHip.position.x) / 2f,
+        centerY = (leftHip.position.y + rightHip.position.y) / 2f,
+        leftAnkleY = leftAnkle.position.y,
+        rightAnkleY = rightAnkle.position.y,
+        referenceSize = reference,
+    )
 }

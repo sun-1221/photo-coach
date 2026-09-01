@@ -19,23 +19,50 @@ internal data class PoseSignalInput(
     val rightEar: PosePointSample? = null,
     val leftWrist: PosePointSample? = null,
     val rightWrist: PosePointSample? = null,
+    val leftElbow: PosePointSample? = null,
+    val rightElbow: PosePointSample? = null,
+    val leftKnee: PosePointSample? = null,
+    val rightKnee: PosePointSample? = null,
+    val leftAnkle: PosePointSample? = null,
+    val rightAnkle: PosePointSample? = null,
     val faceYawDegrees: Float? = null,
+    val frameWidth: Float = 0f,
+    val frameHeight: Float = 0f,
 )
 
 internal data class PoseSignalResult(
     val shouldersSquare: Boolean = false,
     val shouldersRaised: Boolean = false,
     val handsNeedPlacement: Boolean = false,
+    val atLeastOneHandOutsideTorso: Boolean = false,
+    val anklesVisible: Boolean = false,
+    val anklesNearBottomEdge: Boolean = false,
+    val jointsNearFrameEdge: Boolean = false,
+    val seatedCandidate: Boolean = false,
+    val torsoUpright: Boolean = false,
+    val fullBodyVisible: Boolean = false,
 )
 
 internal object PoseSignalClassifier {
     fun classify(input: PoseSignalInput): PoseSignalResult {
         val upperBody = upperBody(input) ?: return PoseSignalResult()
         val torso = torso(input, upperBody)
+        val leftAnkle = input.leftAnkle.visibleOrNull()
+        val rightAnkle = input.rightAnkle.visibleOrNull()
+        val anklesVisible = leftAnkle != null && rightAnkle != null
         return PoseSignalResult(
             shouldersSquare = shouldersSquare(input, upperBody, torso),
             shouldersRaised = shouldersRaised(input, upperBody, torso),
             handsNeedPlacement = torso?.let { handsNeedPlacement(input, it) } == true,
+            atLeastOneHandOutsideTorso = torso?.let { handOutsideTorso(input, it) } == true,
+            anklesVisible = anklesVisible,
+            anklesNearBottomEdge = anklesVisible && listOfNotNull(leftAnkle, rightAnkle).any {
+                input.frameHeight > 0f && it.y >= input.frameHeight * BOTTOM_EDGE_RATIO
+            },
+            jointsNearFrameEdge = jointsNearFrameEdge(input),
+            seatedCandidate = torso?.let { seatedCandidate(input, it) } == true,
+            torsoUpright = torso?.let { torsoUpright(upperBody, it) } == true,
+            fullBodyVisible = anklesVisible && torso != null,
         )
     }
 
@@ -66,6 +93,36 @@ internal object PoseSignalClassifier {
         return listOf(leftWrist, rightWrist).all { wrist ->
             wrist.y in shoulderTop..hipBottom && wrist.x in minX..maxX
         }
+    }
+
+    private fun handOutsideTorso(input: PoseSignalInput, torso: Torso): Boolean {
+        val minX = minOf(torso.leftShoulder.x, torso.rightShoulder.x, torso.leftHip.x, torso.rightHip.x)
+        val maxX = maxOf(torso.leftShoulder.x, torso.rightShoulder.x, torso.leftHip.x, torso.rightHip.x)
+        return listOfNotNull(input.leftWrist.visibleOrNull(), input.rightWrist.visibleOrNull()).any { it.x !in minX..maxX }
+    }
+
+    private fun jointsNearFrameEdge(input: PoseSignalInput): Boolean {
+        if (input.frameWidth <= 0f || input.frameHeight <= 0f) return false
+        val marginX = input.frameWidth * JOINT_EDGE_RATIO
+        val marginY = input.frameHeight * JOINT_EDGE_RATIO
+        return listOf(input.leftWrist, input.rightWrist, input.leftElbow, input.rightElbow,
+            input.leftKnee, input.rightKnee, input.leftAnkle, input.rightAnkle)
+            .mapNotNull { it.visibleOrNull() }
+            .any { it.x <= marginX || it.x >= input.frameWidth - marginX || it.y <= marginY || it.y >= input.frameHeight - marginY }
+    }
+
+    private fun seatedCandidate(input: PoseSignalInput, torso: Torso): Boolean {
+        val knees = listOfNotNull(input.leftKnee.visibleOrNull(), input.rightKnee.visibleOrNull())
+        if (knees.size < 2) return false
+        val hipY = (torso.leftHip.y + torso.rightHip.y) / 2f
+        val kneeY = knees.map { it.y }.average().toFloat()
+        return kneeY > hipY && kneeY - hipY <= torso.height * MAX_SEATED_KNEE_DROP_RATIO
+    }
+
+    private fun torsoUpright(upperBody: UpperBody, torso: Torso): Boolean {
+        val shoulderX = (upperBody.leftShoulder.x + upperBody.rightShoulder.x) / 2f
+        val hipX = (torso.leftHip.x + torso.rightHip.x) / 2f
+        return abs(shoulderX - hipX) / torso.height <= MAX_UPRIGHT_HORIZONTAL_RATIO
     }
 
     private fun upperBody(input: PoseSignalInput): UpperBody? {
@@ -121,4 +178,8 @@ internal object PoseSignalClassifier {
     private const val FRONT_SHOULDER_TO_TORSO_RATIO = 0.6f
     private const val MAX_SQUARE_SHOULDER_DEPTH_RATIO = 0.35f
     private const val RAISED_SHOULDER_TO_REFERENCE_RATIO = 0.28f
+    private const val BOTTOM_EDGE_RATIO = 0.94f
+    private const val JOINT_EDGE_RATIO = 0.025f
+    private const val MAX_SEATED_KNEE_DROP_RATIO = 0.9f
+    private const val MAX_UPRIGHT_HORIZONTAL_RATIO = 0.22f
 }

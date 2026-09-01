@@ -17,6 +17,7 @@ class CoachAnalyzer(
     private val viewSize: () -> Pair<Int, Int>,
     private val extras: () -> AnalyzerExtras,
     private val onFrame: (signals: com.photocoach.coach.Signals, overlay: OverlayGeometry) -> Unit,
+    private val minimumFrameIntervalMs: () -> Long = { 0L },
 ) : ImageAnalysis.Analyzer {
 
     private val faceDetector = FaceDetection.getClient(
@@ -54,7 +55,14 @@ class CoachAnalyzer(
             focusOnFace = extra.focusOnFace,
             lensObscured = lastLensObscured,
         )
-        onFrame(signals, overlay.fitCenter(frame.width, frame.height, w, h))
+        val temporal = temporalPoseTracker.update(poseMotionSample(pose, frame.timestampMs))
+        onFrame(
+            signals.copy(
+                walkingMotionStable = temporal.walkingMotionStable,
+                subjectMotionHigh = temporal.subjectMotionHigh,
+            ),
+            overlay.fitCenter(frame.width, frame.height, w, h),
+        )
     }
 
     @Volatile
@@ -62,16 +70,25 @@ class CoachAnalyzer(
     @Volatile
     private var lastLensObscured: Boolean = false
     private val lensObstructionDetector = LensObstructionDetector()
+    private val temporalPoseTracker = TemporalPoseTracker()
+    private var lastAcceptedFrameMs = Long.MIN_VALUE
 
     override fun analyze(image: ImageProxy) {
         try {
+            val timestampMs = image.imageInfo.timestamp / 1_000_000L
+            val interval = minimumFrameIntervalMs().coerceAtLeast(0L)
+            if (lastAcceptedFrameMs != Long.MIN_VALUE && timestampMs - lastAcceptedFrameMs < interval) {
+                image.close()
+                return
+            }
+            lastAcceptedFrameMs = timestampMs
             val stats = FrameStats.compute(image, image.imageInfo.rotationDegrees)
             val (width, height) = rotatedAnalysisDimensions(
                 image.width,
                 image.height,
                 image.imageInfo.rotationDegrees,
             )
-            lastFrame = AnalysisFrame(stats, width, height)
+            lastFrame = AnalysisFrame(stats, width, height, timestampMs)
             lastLensObscured = lensObstructionDetector.update(stats)
             mlKit.analyze(image)
         } catch (_: Exception) {
@@ -86,6 +103,7 @@ class CoachAnalyzer(
     }
 
     fun close() {
+        temporalPoseTracker.reset()
         faceDetector.close()
         poseDetector.close()
     }
@@ -111,6 +129,7 @@ private data class AnalysisFrame(
     val stats: FrameStats,
     val width: Int,
     val height: Int,
+    val timestampMs: Long,
 )
 
 internal fun rotatedAnalysisDimensions(width: Int, height: Int, rotationDegrees: Int): Pair<Int, Int> =
@@ -153,5 +172,7 @@ private fun OverlayGeometry.fitCenter(
             RectF(mapX(rect.left), mapY(rect.top), mapX(rect.right), mapY(rect.bottom))
         },
         posePoints = posePoints.map { point -> PointF(mapX(point.x), mapY(point.y)) },
+        canvasWidth = targetWidth,
+        canvasHeight = targetHeight,
     )
 }

@@ -151,6 +151,9 @@ enum class CueId {
 
     @SerialName("angle_body_backlit")
     ANGLE_BODY_BACKLIT,
+
+    @SerialName("p1_technique")
+    P1_TECHNIQUE,
 }
 
 @Serializable
@@ -196,6 +199,21 @@ data class Signals(
     val skyOverexposed: Boolean = false,
     val subjectCutOff: Boolean = false,
     val lensObscured: Boolean = false,
+    val faceReliable: Boolean = false,
+    val poseReliable: Boolean = false,
+    val anklesVisible: Boolean = false,
+    val anklesNearBottomEdge: Boolean = false,
+    val jointsNearFrameEdge: Boolean = false,
+    val atLeastOneHandOutsideTorso: Boolean = false,
+    val seatedCandidate: Boolean = false,
+    val torsoUpright: Boolean = false,
+    val walkingCandidate: Boolean = false,
+    val walkingMotionStable: Boolean = false,
+    val subjectMotionHigh: Boolean = false,
+    val backgroundEdgeDensityHigh: Boolean = false,
+    val handheldStable: Boolean = true,
+    val meanLuma: Float? = null,
+    val highlightRatio: Float? = null,
 )
 
 data class OverlayHint(

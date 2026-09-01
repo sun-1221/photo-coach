@@ -14,6 +14,7 @@ data class FrameStats(
     val verticalEnergy: Float,
     val horizontalEnergy: Float,
     val lumaGrid: LumaGrid? = null,
+    val highlightRatio: Float = 0f,
 ) {
     val oneSideBrighter: Boolean get() = abs(leftMean - rightMean) > 18f
     val sceneBright: Boolean get() = meanY > 100f
@@ -51,6 +52,7 @@ data class FrameStats(
             var vert = 0L
             var hor = 0L
             var edgeCount = 0
+            var highlightCount = 0
             val midX = width / 2
             val topH = height / 3
             for (row in 0 until height step step) {
@@ -62,6 +64,7 @@ data class FrameStats(
                     sum += value
                     sumSq += value * value
                     count++
+                    if (value >= 245) highlightCount++
                     if (col < midX) {
                         left += value
                         leftCount++
@@ -101,6 +104,7 @@ data class FrameStats(
                 verticalEnergy = if (edgeCount == 0) 0f else vert.toFloat() / (edgeCount + 1),
                 horizontalEnergy = if (edgeCount == 0) 0f else hor.toFloat() / edgeCount,
                 lumaGrid = LumaGrid(width, height, step, rotationDegrees, lumaSamples),
+                highlightRatio = if (count == 0) 0f else highlightCount.toFloat() / count,
             )
         }
 

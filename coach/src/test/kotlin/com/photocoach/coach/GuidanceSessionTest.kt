@@ -134,6 +134,35 @@ class GuidanceSessionTest {
     }
 
     @Test
+    fun optionalAvailabilityDoesNotFlickerOnTransientCandidateLoss() {
+        val session = readySession()
+        val retreat = Cue(
+            CueId.KEEP_SUBJECT_IN_FRAME,
+            "退半步，人物留全",
+            Audience.SHOOTER,
+            Channel.COMPOSITION,
+            priority = 80,
+        )
+        val initial = output(listOf(moveCloser(priority = 100), retreat, subjectCue()))
+        stabilize(session, initial, Signals(faceCount = 1, faceRatio = 0.04f))
+        session.skip(250)
+        session.skip(350)
+        assertTrue(session.snapshot().canRequestOptional)
+
+        session.onCandidates(output(emptyList()), Signals(faceCount = 1, poseAvailable = true), 400)
+        assertTrue(session.snapshot().canRequestOptional)
+        session.onCandidates(output(emptyList()), Signals(faceCount = 1, poseAvailable = true), 500)
+        assertTrue(session.snapshot().canRequestOptional)
+        session.onCandidates(initial, Signals(faceCount = 1, poseAvailable = true), 600)
+        assertTrue(session.snapshot().canRequestOptional)
+
+        session.onCandidates(output(emptyList()), Signals(faceCount = 1, poseAvailable = true), 700)
+        session.onCandidates(output(emptyList()), Signals(faceCount = 1, poseAvailable = true), 800)
+        session.onCandidates(output(emptyList()), Signals(faceCount = 1, poseAvailable = true), 900)
+        assertFalse(session.snapshot().canRequestOptional)
+    }
+
+    @Test
     fun intentLockAndSaveResultsResetPerPhoto() {
         val session = readySession()
         session.selectIntent(ShotIntent.PERSON_WITH_SCENERY, 10)

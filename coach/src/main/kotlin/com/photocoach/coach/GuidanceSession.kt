@@ -72,6 +72,9 @@ class GuidanceSession(
     private var roundId = 0
     private var requiredSubject: Cue? = null
     private var optionalCandidates: List<Cue> = emptyList()
+    private var optionalCandidateSignature: List<CueId> = emptyList()
+    private var optionalCandidateSinceMs = 0L
+    private var optionalCandidateFrames = 0
     private var candidateSignature: List<CueId> = emptyList()
     private var candidateSinceMs: Long = 0L
     private var candidateFrames: Int = 0
@@ -306,6 +309,7 @@ class GuidanceSession(
         val subject = listOfNotNull(stableSubjectCue)
         optionalCandidates = (shooter.drop(1) + if (firstShooter == null) subject else emptyList())
             .sortedByDescending(Cue::priority)
+        primeOptionalCandidateTracking(optionalCandidates, nowMs)
         baselineSignals = signals
         if (firstShooter == null) {
             requiredSubject = null
@@ -378,7 +382,7 @@ class GuidanceSession(
         signals: Signals,
         nowMs: Long,
     ) {
-        refreshOptionalCandidates(cues)
+        observeOptionalCandidates(cues, nowMs)
         val liveIds = cues.mapTo(mutableSetOf(), Cue::id)
         val persistentRecovery = stableShooterCue
             ?.takeIf { it.id in liveIds && it.id in PERSISTENT_RECOVERY_CUES }
@@ -502,6 +506,7 @@ class GuidanceSession(
         requiredStepsUsed = 0
         requiredSubject = null
         optionalCandidates = emptyList()
+        resetOptionalCandidateTracking()
         resetSubjectCandidateTracking()
         resetShooterCandidateTracking()
         presentedCueIds.clear()
@@ -540,13 +545,50 @@ class GuidanceSession(
     }
 
     private fun refreshOptionalCandidates(cues: List<Cue>) {
-        val live = cues
+        optionalCandidates = buildOptionalCandidates(cues)
+        primeOptionalCandidateTracking(optionalCandidates, 0L)
+    }
+
+    private fun observeOptionalCandidates(cues: List<Cue>, nowMs: Long) {
+        val live = buildOptionalCandidates(cues)
+        val stableAdditions = listOfNotNull(stableShooterCue, stableSubjectCue)
+            .filterNot { it.id in presentedCueIds }
+            .filter { candidate -> optionalCandidates.none { it.id == candidate.id } }
+        if (stableAdditions.isNotEmpty()) {
+            optionalCandidates = (optionalCandidates + stableAdditions)
+                .sortedByDescending(Cue::priority)
+                .distinctBy(Cue::id)
+        }
+        val signature = live.map(Cue::id)
+        if (signature != optionalCandidateSignature) {
+            optionalCandidateSignature = signature
+            optionalCandidateSinceMs = nowMs
+            optionalCandidateFrames = 1
+            return
+        }
+        optionalCandidateFrames += 1
+        val stable = nowMs - optionalCandidateSinceMs >= CANDIDATE_STABLE_MS ||
+            optionalCandidateFrames >= CANDIDATE_STABLE_FRAMES
+        if (stable) optionalCandidates = live
+    }
+
+    private fun buildOptionalCandidates(cues: List<Cue>): List<Cue> = cues
             .filter { it.audience == Audience.SHOOTER }
             .plus(listOfNotNull(stableSubjectCue))
             .filterNot { it.id in presentedCueIds }
             .sortedByDescending(Cue::priority)
             .distinctBy(Cue::id)
-        optionalCandidates = live
+
+    private fun primeOptionalCandidateTracking(candidates: List<Cue>, nowMs: Long) {
+        optionalCandidateSignature = candidates.map(Cue::id)
+        optionalCandidateSinceMs = nowMs
+        optionalCandidateFrames = 0
+    }
+
+    private fun resetOptionalCandidateTracking() {
+        optionalCandidateSignature = emptyList()
+        optionalCandidateSinceMs = 0L
+        optionalCandidateFrames = 0
     }
 
     private fun resetSubjectCandidateTracking() {

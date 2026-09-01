@@ -97,6 +97,29 @@ class PoseSignalClassifierTest {
         assertTrue(correctionSignals.handsNeedPlacement)
         assertFalse(relaxedSignals.shouldersRaised)
         assertFalse(relaxedSignals.handsNeedPlacement)
+        assertTrue(relaxedSignals.atLeastOneHandOutsideTorso)
+    }
+
+    @Test
+    fun fullBodySignalsUseOnlyReliableVisibleLandmarks() {
+        val fullBody = baseInput().copy(
+            leftElbow = point(20f, 200f),
+            rightElbow = point(280f, 200f),
+            leftKnee = point(110f, 420f),
+            rightKnee = point(190f, 420f),
+            leftAnkle = point(120f, 590f),
+            rightAnkle = point(180f, 570f),
+            frameWidth = 300f,
+            frameHeight = 600f,
+        )
+        val result = PoseSignalClassifier.classify(fullBody)
+        assertTrue(result.anklesVisible)
+        assertTrue(result.anklesNearBottomEdge)
+        assertTrue(result.jointsNearFrameEdge)
+
+        val unknown = PoseSignalClassifier.classify(fullBody.copy(rightAnkle = point(180f, 570f, likelihood = 0.1f)))
+        assertFalse(unknown.anklesVisible)
+        assertFalse(unknown.anklesNearBottomEdge)
     }
 
     private fun baseInput(
