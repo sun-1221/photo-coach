@@ -85,6 +85,17 @@ class CoachRulesTest {
     }
 
     @Test
+    fun poseOnlyFrameFallsBackToFindPersonAfterObservablePoseIssueClears() {
+        val output = engine.evaluate(
+            Signals(faceCount = 0, poseAvailable = true),
+            ShotIntent.CLOSE_UP,
+        )
+
+        assertEquals(listOf(CueId.FIND_PERSON), output.cues.map(Cue::id))
+        assertEquals("请露出脸，或靠近一点", output.cues.single().text)
+    }
+
+    @Test
     fun multipleFacesKeepOnlySafeFramingAndExposureCues() {
         val output = engine.evaluate(
             Signals(

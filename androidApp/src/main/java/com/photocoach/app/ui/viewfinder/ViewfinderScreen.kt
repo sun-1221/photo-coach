@@ -1547,11 +1547,11 @@ private fun guidanceStageLabel(ui: ViewfinderUi, stage: GuidanceStage): String {
     return when (stage) {
         is GuidanceStage.Action -> ui.guidance.stepLabel.orEmpty()
         is GuidanceStage.Ready -> if (
-            ui.subjectCaptionsEnabled && stage.retainedSubjectCue != null
+            stage.qualityConfirmed && ui.subjectCaptionsEnabled && stage.retainedSubjectCue != null
         ) {
             "可以拍了"
         } else {
-            "就绪"
+            if (stage.qualityConfirmed) "就绪" else "随时可拍"
         }
         is GuidanceStage.Optional -> "优化"
         is GuidanceStage.Saved -> "✓"
@@ -1567,14 +1567,15 @@ private fun guidanceText(ui: ViewfinderUi): String {
         is GuidanceStage.Action -> promptText(stage.cue.audience, stage.cue.text, ui.subjectCaptionsEnabled)
         is GuidanceStage.Ready -> when {
             ui.poseCueText != null -> ui.poseCueText
-            ui.subjectCaptionsEnabled && stage.retainedSubjectCue != null ->
+            stage.qualityConfirmed && ui.subjectCaptionsEnabled && stage.retainedSubjectCue != null ->
                 checkNotNull(stage.retainedSubjectCue).text
             ui.guidance.canRequestOptional -> "发现新建议，可再优化"
-            else -> "可以拍了"
+            stage.qualityConfirmed -> "可以拍了"
+            else -> "画面还可调整，快门仍可使用"
         }
         is GuidanceStage.Optional -> promptText(stage.cue.audience, stage.cue.text, ui.subjectCaptionsEnabled)
         GuidanceStage.Capturing -> ui.saveStatusText ?: "正在捕获并保存"
-        is GuidanceStage.Saved -> "已保存到系统相册"
+        is GuidanceStage.Saved -> ui.saveStatusText ?: "已保存到系统相册"
         is GuidanceStage.SaveFailed -> stage.message
     }
 }

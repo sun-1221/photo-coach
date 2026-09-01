@@ -26,7 +26,8 @@ object CueSelector {
             if (!signals.poseAvailable) {
                 return listOfNotNull(sanitize(catalog.cue(CueId.FIND_PERSON), emptyList()))
             }
-            return listOfNotNull(pickPose(catalog, scene = null, signals))
+            val poseCue = pickPose(catalog, scene = null, signals)
+            return listOfNotNull(poseCue ?: catalog.cue(CueId.FIND_PERSON))
                 .mapNotNull { sanitize(it, emptyList()) }
                 .take(1)
         }

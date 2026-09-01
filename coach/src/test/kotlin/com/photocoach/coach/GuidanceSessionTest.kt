@@ -35,13 +35,63 @@ class GuidanceSessionTest {
     @Test
     fun observationAndShooterTimeoutsNeverBecomeInfiniteThinking() {
         val noCue = readySession()
+        noCue.onCandidates(
+            output(emptyList()),
+            Signals(faceCount = 1, faceRatio = CueSelector.CLOSE_UP_MIN_FACE_RATIO),
+            100,
+        )
         noCue.tick(GuidanceSession.OBSERVATION_TIMEOUT_MS)
-        assertInstanceOf(GuidanceStage.Ready::class.java, noCue.snapshot().stage)
+        val ready = assertInstanceOf(GuidanceStage.Ready::class.java, noCue.snapshot().stage)
+        assertTrue(ready.qualityConfirmed)
 
         val action = readySession()
         stabilize(action, output(listOf(moveCloser())), Signals(faceCount = 1, faceRatio = 0.04f))
         action.tick(200 + GuidanceSession.SHOOTER_TIMEOUT_MS)
         assertInstanceOf(GuidanceStage.Ready::class.java, action.snapshot().stage)
+    }
+
+    @Test
+    fun observationTimeoutWithNoReliablePersonShowsRecoveryInsteadOfFalseReady() {
+        val session = readySession()
+        session.onCandidates(output(emptyList()), Signals(), 100)
+
+        session.tick(GuidanceSession.OBSERVATION_TIMEOUT_MS)
+
+        assertInstanceOf(GuidanceStage.Action::class.java, session.snapshot().stage)
+        assertEquals(CueId.FIND_PERSON, session.snapshot().currentCue?.id)
+        assertTrue(session.snapshot().shutterEnabled)
+    }
+
+    @Test
+    fun userCanSkipPersonRecoveryWithoutLockingShutterOrClaimingQuality() {
+        val session = readySession()
+        val recovery = Cue(
+            CueId.FIND_PERSON,
+            "请露出脸，或靠近一点",
+            Audience.SHOOTER,
+            Channel.COMPOSITION,
+            priority = 118,
+            critical = true,
+        )
+        stabilize(session, output(listOf(recovery)), Signals())
+
+        assertTrue(session.skip(300))
+
+        val ready = assertInstanceOf(GuidanceStage.Ready::class.java, session.snapshot().stage)
+        assertFalse(ready.qualityConfirmed)
+        assertTrue(session.snapshot().shutterEnabled)
+    }
+
+    @Test
+    fun unresolvedQualityCanEndAdviceBudgetWithoutClaimingConfirmedReady() {
+        val session = readySession()
+        stabilize(session, output(listOf(moveCloser())), Signals(faceCount = 1, faceRatio = 0.04f))
+
+        session.tick(200 + GuidanceSession.SHOOTER_TIMEOUT_MS)
+
+        val ready = assertInstanceOf(GuidanceStage.Ready::class.java, session.snapshot().stage)
+        assertFalse(ready.qualityConfirmed)
+        assertTrue(session.snapshot().shutterEnabled)
     }
 
     @Test
@@ -303,6 +353,11 @@ class GuidanceSessionTest {
     @Test
     fun stablePoseThatAppearsAfterObservationTimeoutBecomesOptionalWithoutAddingRequiredStep() {
         val session = readySession()
+        session.onCandidates(
+            output(emptyList()),
+            Signals(faceCount = 1, faceRatio = CueSelector.CLOSE_UP_MIN_FACE_RATIO),
+            100,
+        )
         session.tick(GuidanceSession.OBSERVATION_TIMEOUT_MS)
         assertInstanceOf(GuidanceStage.Ready::class.java, session.snapshot().stage)
 
