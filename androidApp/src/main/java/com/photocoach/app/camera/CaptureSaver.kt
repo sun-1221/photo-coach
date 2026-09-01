@@ -24,6 +24,8 @@ object CaptureSaver {
         source: File,
         displayName: String = newDisplayName(),
         dateTakenMillis: Long = System.currentTimeMillis(),
+        motionPhoto: Boolean = displayName.contains("MP.", ignoreCase = true),
+        onAssetStage: ((AssetPublishStage) -> Unit)? = null,
         onPendingCreated: ((Uri) -> Unit)? = null,
     ): Uri {
         require(source.isFile && source.length() > 0L) { "captured photo is empty" }
@@ -43,8 +45,16 @@ object CaptureSaver {
         }
         val uri = resolver.insert(collection, values) ?: throw IOException("cannot create MediaStore row")
         try {
+            onAssetStage?.invoke(AssetPublishStage.MEDIASTORE_INSERT_PENDING)
             onPendingCreated?.invoke(uri)
-            writeAndCommit(resolver, uri, source)
+            writePending(resolver, uri, source)
+            onAssetStage?.invoke(AssetPublishStage.ORIGINAL_COPY)
+            PublishedAssetVerifier.verifyPending(resolver, uri, motionPhoto)
+            onAssetStage?.invoke(AssetPublishStage.VERIFY_PENDING)
+            commit(resolver, uri)
+            onAssetStage?.invoke(AssetPublishStage.MEDIASTORE_COMMIT)
+            PublishedAssetVerifier.verifyPublished(resolver, uri, displayName, RELATIVE_DIR, motionPhoto)
+            onAssetStage?.invoke(AssetPublishStage.VERIFY_PUBLISHED)
             return uri
         } catch (error: Throwable) {
             resolver.delete(uri, null, null)
@@ -52,9 +62,18 @@ object CaptureSaver {
         }
     }
 
-    fun resumePending(resolver: ContentResolver, uri: Uri, source: File): Uri {
+    fun resumePending(
+        resolver: ContentResolver,
+        uri: Uri,
+        source: File,
+        displayName: String,
+        motionPhoto: Boolean = false,
+    ): Uri {
         require(source.isFile && source.length() > 0L) { "captured photo is empty" }
-        writeAndCommit(resolver, uri, source)
+        writePending(resolver, uri, source)
+        PublishedAssetVerifier.verifyPending(resolver, uri, motionPhoto)
+        commit(resolver, uri)
+        PublishedAssetVerifier.verifyPublished(resolver, uri, displayName, RELATIVE_DIR, motionPhoto)
         return uri
     }
 
@@ -62,10 +81,13 @@ object CaptureSaver {
         if (uri != null) runCatching { resolver.delete(uri, null, null) }
     }
 
-    private fun writeAndCommit(resolver: ContentResolver, uri: Uri, source: File) {
+    private fun writePending(resolver: ContentResolver, uri: Uri, source: File) {
         resolver.openOutputStream(uri, "w")?.use { output ->
             source.inputStream().buffered().use { input -> input.copyTo(output) }
         } ?: throw IOException("cannot open MediaStore output")
+    }
+
+    private fun commit(resolver: ContentResolver, uri: Uri) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val updated = resolver.update(
                 uri,
@@ -76,4 +98,12 @@ object CaptureSaver {
             if (updated != 1) throw IOException("cannot publish MediaStore row")
         }
     }
+}
+
+enum class AssetPublishStage {
+    MEDIASTORE_INSERT_PENDING,
+    ORIGINAL_COPY,
+    VERIFY_PENDING,
+    MEDIASTORE_COMMIT,
+    VERIFY_PUBLISHED,
 }

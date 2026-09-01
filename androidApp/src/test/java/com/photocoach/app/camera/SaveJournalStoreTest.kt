@@ -9,6 +9,26 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
 class SaveJournalStoreTest {
+    @Test
+    fun journalCarriesVersionedVerificationAndRetryState() {
+        val store = SaveJournalStore(temporaryDirectory.resolve("versioned-journals").toFile())
+        val record = SaveJournal(
+            captureId = "feed1234cafe5678",
+            sequence = 1,
+            takenAtMillis = 1234,
+            sourcePath = "pending.jpg",
+            displayName = "IMG_test_S01_ORIG.JPG",
+            style = "ORIGINAL",
+            outputLength = 1234,
+            verifiedAssetStages = setOf(AssetPublishStage.VERIFY_PENDING.name),
+            stageRetryCounts = mapOf(SaveStage.ORIGINAL_PUBLISH.name to 2),
+        )
+        store.write(record)
+        val restored = store.readAll().single()
+        assertEquals(SaveJournal.CURRENT_SCHEMA_VERSION, restored.schemaVersion)
+        assertEquals(1234, restored.outputLength)
+        assertEquals(2, restored.stageRetryCounts[SaveStage.ORIGINAL_PUBLISH.name])
+    }
     @TempDir
     lateinit var temporaryDirectory: Path
 

@@ -12,6 +12,7 @@ import kotlinx.serialization.json.Json
 
 @Serializable
 data class SaveJournal(
+    val schemaVersion: Int = CURRENT_SCHEMA_VERSION,
     val captureId: String,
     val sequence: Int,
     val takenAtMillis: Long,
@@ -39,13 +40,19 @@ data class SaveJournal(
     val motionPhotoRequested: Boolean = false,
     val motionPhotoFallback: Boolean = false,
     val derivativeRequested: Boolean = false,
+    val outputLength: Long? = null,
+    val verifiedAssetStages: Set<String> = emptySet(),
+    val stageRetryCounts: Map<String, Int> = emptyMap(),
 ) {
     init {
         CaptureId(captureId)
         require(sequence in 1..99)
+        require(schemaVersion in 1..CURRENT_SCHEMA_VERSION)
     }
 
     val key: String get() = "${captureId}_S${sequence.toString().padStart(2, '0')}"
+
+    companion object { const val CURRENT_SCHEMA_VERSION = 2 }
 }
 
 class SaveJournalStore(private val directory: File) {

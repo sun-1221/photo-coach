@@ -47,6 +47,7 @@ import com.photocoach.app.creative.EditAdjustment
 import com.photocoach.app.creative.EditRecipe
 import com.photocoach.app.creative.EditRecipeStore
 import com.photocoach.app.creative.PhotoQualityScore
+import com.photocoach.app.creative.NormalizedFaceRegion
 import com.photocoach.coach.Signals
 import com.photocoach.coach.SuggestedMode
 import java.io.File
@@ -62,6 +63,8 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 enum class FlashSetting { OFF, AUTO }
@@ -106,6 +109,7 @@ data class CaptureSpec(
     val saveStrategy: SaveStrategy,
     val derivativeQuality: DerivativeQuality,
     val livePhotoRequested: Boolean,
+    val portraitRegion: NormalizedFaceRegion? = null,
 )
 
 class CameraBinder(
@@ -138,13 +142,15 @@ class CameraBinder(
     private var pendingCapture: PendingCapture? = null
     private var captureInProgress = false
     private var smoothZoomRatio = 1f
+    private val prepareMutex = Mutex()
+    @Volatile private var thermalLevel: ThermalLevel = ThermalLevel.UNKNOWN
 
     var flashSetting: FlashSetting = FlashSetting.OFF
         private set
     var aeAfLocked: Boolean = false
         private set
 
-    suspend fun prepare() {
+    suspend fun prepare() = prepareMutex.withLock {
         if (provider != null) return
         withContext(Dispatchers.IO) { recoverInterruptedSaves() }
         val cameraProvider = awaitProvider()
@@ -198,6 +204,7 @@ class CameraBinder(
             viewSize = { previewView.width to previewView.height },
             extras = extras,
             onFrame = onSignals,
+            minimumFrameIntervalMs = { ThermalPolicy.forLevel(thermalLevel).analysisIntervalMs },
         )
         analyzer = coachAnalyzer
 
@@ -207,7 +214,8 @@ class CameraBinder(
             .build()
             .also { it.setAnalyzer(analysisExecutor, coachAnalyzer) }
 
-        val liveRequested = settings.livePhotoEnabled
+        val thermalPolicy = ThermalPolicy.forLevel(thermalLevel)
+        val liveRequested = settings.livePhotoEnabled && thermalPolicy.allowNewLive
         val effectiveRequestedMode = if (liveRequested) SuggestedMode.PHOTO else requestedMode
         val choice = ExtensionPolicy.resolve(
             requested = effectiveRequestedMode,
@@ -222,11 +230,13 @@ class CameraBinder(
         var activeMode = if (choice is ExtensionChoice.Enabled) effectiveRequestedMode else SuggestedMode.PHOTO
         var extensionFallback = !liveRequested && effectiveRequestedMode != SuggestedMode.PHOTO && choice == ExtensionChoice.Standard
         livePhotoAvailable = false
-        liveFallbackReason = null
+        liveFallbackReason = if (settings.livePhotoEnabled && !thermalPolicy.allowNewLive) {
+            "设备温度较高，Live 已降级为普通照片"
+        } else null
         recorder = null
         videoCapture = null
         val liveCandidates: List<Pair<Recorder, VideoCapture<Recorder>>> = if (liveRequested) {
-            LIVE_VIDEO_TIER_FALLBACK_ORDER.mapNotNull { tier ->
+            (if (thermalPolicy.preferSdLive) LIVE_VIDEO_TIER_FALLBACK_ORDER.reversed() else LIVE_VIDEO_TIER_FALLBACK_ORDER).mapNotNull { tier ->
                 runCatching {
                     val candidateRecorder = Recorder.Builder()
                         .setExecutor(videoExecutor)
@@ -342,6 +352,8 @@ class CameraBinder(
         aeAfLocked = false
         return selected
     }
+
+    fun updateThermalLevel(level: ThermalLevel) { thermalLevel = level }
 
     fun setTelephotoEnabled(enabled: Boolean): QuickFocalPreset? {
         val requested = if (enabled) {
@@ -560,7 +572,12 @@ class CameraBinder(
 
     fun retrySave(onSaved: (CapturedPhoto) -> Unit, onSaveError: (Throwable) -> Unit): Boolean {
         if (pendingCapture?.file?.isFile != true || captureInProgress) return false
-        pendingCapture?.coordinator?.retryFailed()
+        pendingCapture?.let { pending ->
+            pending.coordinator.snapshot.failedStage?.name?.let { failed ->
+                pending.stageRetryCounts[failed] = (pending.stageRetryCounts[failed] ?: 0) + 1
+            }
+            pending.coordinator.retryFailed()
+        }
         pendingCapture?.let(::writeJournal)
         captureInProgress = true
         publishPending(onSaved, onSaveError)
@@ -855,10 +872,17 @@ class CameraBinder(
                         pending.primaryFile(),
                         displayName,
                         pending.spec.takenAtMillis,
-                    ) { pendingUri ->
-                        pending.pendingUri = pendingUri
-                        writeJournal(pending)
-                    }
+                        motionPhoto = pending.isMotionPhoto,
+                        onAssetStage = { stage ->
+                            pending.verifiedAssetStages += stage.name
+                            if (stage == AssetPublishStage.VERIFY_PUBLISHED) pending.outputLength = pending.primaryFile().length()
+                            writeJournal(pending)
+                        },
+                        onPendingCreated = { pendingUri ->
+                            pending.pendingUri = pendingUri
+                            writeJournal(pending)
+                        },
+                    )
                     pending.pendingUri = null
                 } catch (error: Throwable) {
                     pending.pendingUri = null
@@ -892,9 +916,13 @@ class CameraBinder(
                         pending.spec.style,
                         pending.spec.edit,
                         pending.spec.derivativeQuality,
+                        pending.spec.portraitRegion,
                     )
                     pending.derivativeFile = processed.file
                     pending.effectWasDownsampled = processed.wasDownsampled
+                    if (processed.portraitConservativeStrengthApplied) {
+                        pending.warnings += "已使用人像保守强度"
+                    }
                 }
             }
             runStage(pending, SaveStage.DERIVATIVE_PUBLISH) {
@@ -910,10 +938,11 @@ class CameraBinder(
                                 pending.spec.takenAtMillis,
                             ),
                             pending.spec.takenAtMillis,
-                        ) { pendingUri ->
-                            pending.derivativePendingUri = pendingUri
-                            writeJournal(pending)
-                        }
+                            onPendingCreated = { pendingUri ->
+                                pending.derivativePendingUri = pendingUri
+                                writeJournal(pending)
+                            },
+                        )
                         pending.derivativePendingUri = null
                     } catch (error: Throwable) {
                         pending.derivativePendingUri = null
@@ -1072,17 +1101,34 @@ class CameraBinder(
                         journalStore.delete(record)
                         return@runCatching
                     }
-                    val uri = record.pendingUri?.let(Uri::parse)?.let { pendingUri ->
-                        CaptureSaver.resumePending(resolver, pendingUri, primary)
-                    } ?: CaptureSaver.publish(
+                    val motionPhoto = record.motionPhotoRequested && !record.motionPhotoFallback && packaged != null
+                    val stalePending = record.pendingUri?.let(Uri::parse)
+                    val resumed = stalePending?.let { pendingUri ->
+                        runCatching {
+                            CaptureSaver.resumePending(
+                                resolver,
+                                pendingUri,
+                                primary,
+                                record.displayName,
+                                motionPhoto = motionPhoto,
+                            )
+                        }.onFailure {
+                            CaptureSaver.deleteQuietly(resolver, pendingUri)
+                            record = record.copy(pendingUri = null)
+                            journalStore.write(record)
+                        }.getOrNull()
+                    }
+                    val uri = resumed ?: CaptureSaver.publish(
                         resolver,
                         primary,
                         record.displayName,
                         record.takenAtMillis,
-                    ) { pendingUri ->
-                        record = record.copy(pendingUri = pendingUri.toString())
-                        journalStore.write(record)
-                    }
+                        motionPhoto = motionPhoto,
+                        onPendingCreated = { pendingUri ->
+                            record = record.copy(pendingUri = pendingUri.toString())
+                            journalStore.write(record)
+                        },
+                    )
                     record = record.copy(
                         pendingUri = null,
                         originalUri = uri.toString(),
@@ -1148,7 +1194,17 @@ class CameraBinder(
                     journalStore.write(record)
                     recoveryStage = SaveStage.DERIVATIVE_PUBLISH
                     val derivativeUri = record.derivativePendingUri?.let(Uri::parse)?.let { pendingUri ->
-                        CaptureSaver.resumePending(resolver, pendingUri, derivative)
+                        CaptureSaver.resumePending(
+                            resolver,
+                            pendingUri,
+                            derivative,
+                            CaptureIdentity.displayName(
+                                CaptureId(record.captureId),
+                                CaptureAssetKind.EFFECT,
+                                record.sequence,
+                                record.takenAtMillis,
+                            ),
+                        )
                     } ?: CaptureSaver.publish(
                         resolver,
                         derivative,
@@ -1179,6 +1235,14 @@ class CameraBinder(
                 journalStore.delete(record)
             }.onFailure { error ->
                 runCatching {
+                    if (recoveryStage == SaveStage.ORIGINAL_PUBLISH && record.originalUri == null) {
+                        CaptureSaver.deleteQuietly(resolver, record.pendingUri?.let(Uri::parse))
+                        record = record.copy(pendingUri = null)
+                    }
+                    if (recoveryStage == SaveStage.DERIVATIVE_PUBLISH && record.derivativeUri == null) {
+                        CaptureSaver.deleteQuietly(resolver, record.derivativePendingUri?.let(Uri::parse))
+                        record = record.copy(derivativePendingUri = null)
+                    }
                     journalStore.write(
                         record.copy(
                             failedStage = recoveryStage?.name,
@@ -1224,6 +1288,9 @@ class CameraBinder(
         var recipeWritten: Boolean = false,
         var isMotionPhoto: Boolean = false,
         var effectWasDownsampled: Boolean = false,
+        var outputLength: Long? = null,
+        val verifiedAssetStages: MutableSet<String> = mutableSetOf(),
+        val stageRetryCounts: MutableMap<String, Int> = mutableMapOf(),
         var displayName: String = CaptureIdentity.displayName(
             spec.captureId,
             CaptureAssetKind.ORIGINAL,
@@ -1269,6 +1336,9 @@ class CameraBinder(
             motionPhotoRequested = spec.livePhotoRequested,
             motionPhotoFallback = coordinator.snapshot.motionPhotoFallback,
             derivativeRequested = derivativeRequested,
+            outputLength = outputLength,
+            verifiedAssetStages = verifiedAssetStages.toSet(),
+            stageRetryCounts = stageRetryCounts.toMap(),
         )
     }
 }
