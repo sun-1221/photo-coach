@@ -2,6 +2,7 @@ package com.photocoach.app.beauty
 
 import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.graphics.ImageFormat
 import android.graphics.SurfaceTexture
 import android.os.SystemClock
@@ -34,7 +35,11 @@ class BeautyCameraBindingTest {
     @Test fun threeUseCasesCaptureAndReleaseAcrossEffectRebinds() {
         val instrumentation=InstrumentationRegistry.getInstrumentation()
         val context=ApplicationProvider.getApplicationContext<Context>()
-        instrumentation.uiAutomation.grantRuntimePermission(context.packageName,Manifest.permission.CAMERA)
+        if (context.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.CAMERA)
+        }
+        assertEquals("camera permission is required for the binding test", PackageManager.PERMISSION_GRANTED,
+            context.checkSelfPermission(Manifest.permission.CAMERA))
         val provider=ProcessCameraProvider.getInstance(context).get(10,TimeUnit.SECONDS)
         val main=ContextCompat.getMainExecutor(context)
         val worker=Executors.newSingleThreadExecutor()
