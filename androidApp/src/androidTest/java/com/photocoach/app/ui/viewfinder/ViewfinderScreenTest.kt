@@ -5,6 +5,7 @@ import android.os.SystemClock
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -28,6 +29,7 @@ import com.photocoach.app.CreativePhotoUi
 import com.photocoach.app.CreativeResultUi
 import com.photocoach.app.analysis.OverlayGeometry
 import com.photocoach.app.camera.CameraCapabilities
+import com.photocoach.app.camera.CameraModePreference
 import com.photocoach.app.camera.QuickFocalPreset
 import com.photocoach.app.camera.QuickFocalVerification
 import com.photocoach.app.camera.ExposureCapability
@@ -427,7 +429,9 @@ class ViewfinderScreenTest {
     @Test
     fun beautyMenuOffersExplicitPresetsWithoutBlockingShutter() {
         val selected = AtomicReference(BeautyPreset.OFF)
-        render(ui(GuidanceStage.Ready(optionalAvailable = false)), onBeautyPresetChange = selected::set)
+        render(ui(GuidanceStage.Ready(optionalAvailable = false)).copy(modePreference = CameraModePreference.PHOTO),
+            onBeautyPresetChange = selected::set)
+        compose.onNodeWithText("美颜·风格").assertIsDisplayed()
         compose.onNodeWithTag("shutter").assertIsEnabled()
         compose.onNodeWithTag("creative_capture_menu").performClick()
         compose.onNodeWithTag("beauty_natural").performScrollTo().performClick()
@@ -443,6 +447,39 @@ class ViewfinderScreenTest {
         compose.onNodeWithTag("shutter").assertIsDisplayed().assertIsEnabled()
     }
 
+    @Test
+    fun beautyMenuExplainsLiveConflictAndRequiresExplicitModeChanges() {
+        val selected = AtomicReference(BeautyPreset.OFF)
+        val live = AtomicReference(true)
+        val mode = AtomicReference(CameraModePreference.AUTO)
+        render(ui(GuidanceStage.Ready(optionalAvailable = false)).copy(livePhotoEnabled = true),
+            onBeautyPresetChange = selected::set, onLivePhotoChange = live::set, onModePreferenceChange = mode::set)
+        compose.onNodeWithTag("creative_capture_menu").performClick()
+        compose.onNodeWithTag("beauty_unavailable_reason").assertIsDisplayed()
+        compose.onNodeWithTag("beauty_natural").performScrollTo().assertIsNotEnabled()
+        compose.runOnIdle {
+            assertEquals(BeautyPreset.OFF, selected.get())
+            assertEquals(true, live.get())
+            assertEquals(CameraModePreference.AUTO, mode.get())
+        }
+        compose.onNodeWithTag("beauty_disable_live").performScrollTo().performClick()
+        compose.onNodeWithTag("beauty_select_photo").performScrollTo().performClick()
+        compose.runOnIdle {
+            assertEquals(false, live.get())
+            assertEquals(CameraModePreference.PHOTO, mode.get())
+            assertEquals(BeautyPreset.OFF, selected.get())
+        }
+    }
+
+    @Test
+    fun neutralReadyShowsTheCurrentActionWithoutRequiringAnotherStep() {
+        render(ui(GuidanceStage.Ready(optionalAvailable = false, qualityConfirmed = false,
+            readinessIssue = com.photocoach.coach.ReadinessIssue.SUBJECT_TOO_SMALL)))
+        compose.onNodeWithText("人物偏小，请调整拍摄距离").assertIsDisplayed()
+        compose.onNodeWithTag("shutter").assertIsEnabled()
+        compose.onNodeWithTag("optional").assertDoesNotExist()
+    }
+
     private fun render(
         state: ViewfinderUi,
         onIntent: (ShotIntent) -> Unit = {},
@@ -456,6 +493,8 @@ class ViewfinderScreenTest {
         onSelectCreativePhoto: (String) -> Unit = {},
         onSaveCreativeCopy: () -> Unit = {},
         onBeautyPresetChange: (BeautyPreset) -> Unit = {},
+        onLivePhotoChange: (Boolean) -> Unit = {},
+        onModePreferenceChange: (CameraModePreference) -> Unit = {},
     ) {
         compose.setContent {
             PhotoCoachTheme {
@@ -474,7 +513,7 @@ class ViewfinderScreenTest {
                     onTimerChange = {},
                     onAspectRatioChange = {},
                     onCapturePriorityChange = {},
-                    onModePreferenceChange = {},
+                    onModePreferenceChange = onModePreferenceChange,
                     onResetSettings = {},
                     onUnlockFocus = {},
                     onToggleFlash = {},
@@ -496,6 +535,7 @@ class ViewfinderScreenTest {
                     onSelectCreativePhoto = onSelectCreativePhoto,
                     onSaveCreativeCopy = onSaveCreativeCopy,
                     onBeautyPresetChange = onBeautyPresetChange,
+                    onLivePhotoChange = onLivePhotoChange,
                 )
             }
         }

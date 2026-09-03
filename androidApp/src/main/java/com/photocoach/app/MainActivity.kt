@@ -302,6 +302,7 @@ class MainActivity : ComponentActivity() {
                     onSignals = viewModel::onFrame,
                     onLiveFallback = viewModel::onLiveFallback,
                     onBeautyFallback = viewModel::onBeautyFallback,
+                    onBeautyPreviewState = viewModel::onBeautyPreviewState,
                     onError = { viewModel.markCameraError(getString(R.string.camera_busy)) },
                 ) ?: return@launch
                 camera.setFlash(viewModel.ui.value.flashSetting)

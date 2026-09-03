@@ -10,6 +10,8 @@
 
 ### 4.1 相机管线
 
+- 每个 CameraBinder 只解绑本实例登记的 use cases（包括部分失败的绑定），不调用进程级 `unbindAll`；旧页面释放不能解绑新页面或其他相机会话。实际前后台/重绑恢复仍需目标机验收。
+
 - CameraX 普通主路径：`Preview` + `ImageAnalysis` + `ImageCapture`
 - 显式 Live 且能力允许时：`Preview` + `ImageAnalysis` + `ImageCapture` + 无音轨 `VideoCapture<Recorder>`；Live 一律使用标准 Photo 选择器，不启用 Extensions。先用 `SessionConfig.Builder` 构造同一 ViewPort 的四用例组合，并以 `CameraInfo.isSessionConfigSupported` 预检；按 HD、SD 顺序尝试，实际绑定仍失败才回普通三用例并向 UI 返回明确降级原因。
 - `PreviewView` 使用 `FILL_CENTER` 覆盖长屏取景区；竖屏操作区叠在预览底部，避免 4:3 / 16:9 surface 居中产生额外黑带。三用例放入带 `PreviewView.viewPort` 的 `UseCaseGroup`，使预览可见裁切、ML Kit view-referenced 坐标和捕获裁切使用同一视口。

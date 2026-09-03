@@ -44,6 +44,8 @@
 
 Motion Photo 管线：
 
+- 每段录制由 `LiveRecordingSession` 的唯一代次拥有。重绑/退出先注销代次，旧 Start/Finalize 只可清理自己已结束的临时文件，不能清空、降级或打包新录制。缓存时间从编码器 Start 事件开始计算；快门后停止期限以快门时刻为准，不在 JPEG 保存回调后再额外等待完整 1.5 秒。Finalize 即使没有 cause 也必须按 error code 处理失败，不能误报无错。
+
 1. Live 开关开启后先用标准后摄的 `SessionConfig` 查询四用例组合；候选按 HD、SD 排序，查询不支持则不绑定，查询异常时仍以实际绑定结果为准。成功后使用 `camera-video` 同版本的 `Recorder` 建立无音轨录制。录制文件、时长和大小均有硬上限；不开启音频，不请求 `RECORD_AUDIO`。
 2. 录制生命周期维护快门前缓存；快门后约 1.5 秒停止，并用平台媒体变换裁出总长约 3 秒的 MP4。`ImageCapture` 同时得到原始 JPEG 封面；指导和手动快门继续工作。
 3. `MotionPhotoAssembler` 先扫描 JPEG APP 段。没有 XMP 时新增官方 v1 XMP；旧包与本 App 生成的纯 Motion 包一致时删除旧段并只写一份新段；发现第三方/混合 Motion XMP、非 Motion/扩展 XMP 或 GainMap 时抛出可恢复错误，由保存状态机发布未改写的普通 JPEG。成功路径对齐小米 14 Pro 原生 `MVIMG` 样本：写入 `GCamera:MotionPhoto=1`、`GCamera:MotionPhotoVersion=1`、封面展示时间，在两个 `rdf:li` 中分别嵌套 Primary/MotionPhoto `Container:Item`，MotionPhoto 项包含真实 `Item:Length` 与 `Item:Padding=0`；再追加 MP4，确保没有尾随字节。

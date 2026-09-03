@@ -3,6 +3,7 @@ package com.photocoach.app
 import android.app.Application
 import com.photocoach.app.beauty.BeautyPreset
 import com.photocoach.app.beauty.BeautyCompatibilityPolicy
+import com.photocoach.app.beauty.BeautyPreviewState
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -191,6 +192,7 @@ data class ViewfinderUi(
     val livePhotoEnabled: Boolean = false,
     val beautyPreset: BeautyPreset = BeautyPreset.OFF,
     val beautyPreviewWarning: String? = null,
+    val beautyPreviewState: BeautyPreviewState = BeautyPreviewState.WAITING_FACE,
     val livePhotoAvailable: Boolean = false,
     val liveFallbackReason: String? = null,
     val saveStatusText: String? = null,
@@ -739,14 +741,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             state.modePreference == CameraModePreference.PHOTO)
         if (rejection != null) { showControlMessage(rejection); return }
         _ui.update { it.copy(beautyPreset = preset, beautyPreviewWarning = null,
+            beautyPreviewState = if (preset == BeautyPreset.OFF) BeautyPreviewState.OFF else BeautyPreviewState.WAITING_FACE,
             controlMessage = if (preset == BeautyPreset.OFF) "自然上镜已关闭" else
                 "自然上镜·${preset.label}：原片仍保留，效果按保存策略另存；仅本机处理") }
         persistSettings()
     }
 
     fun onBeautyFallback(reason: String) {
-        _ui.update { it.copy(beautyPreset = BeautyPreset.OFF, beautyPreviewWarning = reason, controlMessage = reason) }
+        _ui.update { it.copy(beautyPreset = BeautyPreset.OFF, beautyPreviewState = BeautyPreviewState.OFF,
+            beautyPreviewWarning = reason, controlMessage = reason) }
         persistSettings()
+    }
+
+    fun onBeautyPreviewState(state: BeautyPreviewState) {
+        _ui.update { if (it.beautyPreset == BeautyPreset.OFF) it else it.copy(beautyPreviewState = state) }
     }
 
     fun onThermalLevel(level: ThermalLevel) {
@@ -1001,6 +1009,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val saveOutcomeText = when {
             recommended.isMotionPhoto -> "Live 已保存到系统相册"
             liveRequested -> "Live 未生成，普通照片已保存"
+            recommended.beautyPreset != BeautyPreset.OFF && recommended.displayUri == recommended.originalUri ->
+                "原片已保存；美颜效果需另存副本"
+            recommended.beautyPreset != BeautyPreset.OFF -> "原片与效果副本已保存"
             else -> null
         }
         guidance.onSaved(recommended.displayUri, now())

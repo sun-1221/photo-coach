@@ -74,6 +74,7 @@ import com.photocoach.app.camera.CaptureTimer
 import com.photocoach.app.camera.DerivativeQuality
 import com.photocoach.app.camera.SaveStrategy
 import com.photocoach.app.beauty.BeautyPreset
+import com.photocoach.app.beauty.BeautyCompatibilityPolicy
 import com.photocoach.app.camera.ThermalPolicy
 import com.photocoach.app.creative.CreativeColorMatrix
 import com.photocoach.app.creative.CreativeStyle
@@ -206,6 +207,7 @@ fun ViewfinderScreen(
                     onDerivativeQualityChange = onDerivativeQualityChange,
                     onLivePhotoChange = onLivePhotoChange,
                     onBeautyPresetChange = onBeautyPresetChange,
+                    onModePreferenceChange = onModePreferenceChange,
                     onApplyParameterSuggestion = onApplyParameterSuggestion,
                     onOpenCreativeResult = onOpenCreativeResult,
                     modifier = Modifier.width(320.dp).fillMaxSize(),
@@ -254,6 +256,7 @@ fun ViewfinderScreen(
                     onDerivativeQualityChange = onDerivativeQualityChange,
                     onLivePhotoChange = onLivePhotoChange,
                     onBeautyPresetChange = onBeautyPresetChange,
+                    onModePreferenceChange = onModePreferenceChange,
                     onApplyParameterSuggestion = onApplyParameterSuggestion,
                     onOpenCreativeResult = onOpenCreativeResult,
                     modifier = Modifier
@@ -562,6 +565,7 @@ private fun OperationPanel(
     onDerivativeQualityChange: (DerivativeQuality) -> Unit,
     onLivePhotoChange: (Boolean) -> Unit,
     onBeautyPresetChange: (BeautyPreset) -> Unit,
+    onModePreferenceChange: (CameraModePreference) -> Unit,
     onApplyParameterSuggestion: (ParameterSuggestion) -> Unit,
     onOpenCreativeResult: () -> Unit,
     modifier: Modifier,
@@ -670,6 +674,7 @@ private fun OperationPanel(
                     onDerivativeQualityChange = onDerivativeQualityChange,
                     onLivePhotoChange = onLivePhotoChange,
                     onBeautyPresetChange = onBeautyPresetChange,
+                    onModePreferenceChange = onModePreferenceChange,
                     onApplyParameterSuggestion = onApplyParameterSuggestion,
                     onOpenCreativeResult = onOpenCreativeResult,
                 )
@@ -731,6 +736,7 @@ private fun CreativeCaptureControl(
     onDerivativeQualityChange: (DerivativeQuality) -> Unit,
     onLivePhotoChange: (Boolean) -> Unit,
     onBeautyPresetChange: (BeautyPreset) -> Unit,
+    onModePreferenceChange: (CameraModePreference) -> Unit,
     onApplyParameterSuggestion: (ParameterSuggestion) -> Unit,
     onOpenCreativeResult: () -> Unit,
 ) {
@@ -744,8 +750,8 @@ private fun CreativeCaptureControl(
         ) {
             Text(
                 ui.burstProgress?.let { "$it/3" }
-                    ?: if (ui.beautyPreset != BeautyPreset.OFF) "上镜·${ui.beautyPreset.label}"
-                    else if (ui.threeShotBurstEnabled) "${ui.creativeStyle.label}·3张" else ui.creativeStyle.label,
+                    ?: if (ui.beautyPreset != BeautyPreset.OFF) "美颜·${ui.beautyPreset.label}"
+                    else "美颜·风格",
                 maxLines = 1,
             )
         }
@@ -762,7 +768,7 @@ private fun CreativeCaptureControl(
                 onStyleChange = onStyleChange,
             )
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Text("自然上镜（独立 P1）", style = MaterialTheme.typography.titleSmall)
+                Text("美颜 · 自然上镜", style = MaterialTheme.typography.titleSmall)
                 Text("复用本机人脸关键点，局部柔化纹理；不上传、不改脸形。原片不变，效果需另存；预览近似。仅普通模式，与 Live 互斥。",
                     style = MaterialTheme.typography.labelSmall)
                 Text("初始参数待小米 14 Pro 真机校准", style = MaterialTheme.typography.labelSmall)
@@ -770,12 +776,33 @@ private fun CreativeCaptureControl(
                     Text("热策略已暂停实时美颜；配方仍按拍摄时预设保存", style = MaterialTheme.typography.labelSmall)
                 }
                 ui.beautyPreviewWarning?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+                BeautyCompatibilityPolicy.rejection(BeautyPreset.NATURAL, ui.livePhotoEnabled,
+                    ui.modePreference == CameraModePreference.PHOTO)?.let { reason ->
+                    Text(reason, style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.testTag("beauty_unavailable_reason"))
+                }
+                if (ui.livePhotoEnabled) {
+                    TextButton(onClick = { onLivePhotoChange(false) }, enabled = !capturing,
+                        modifier = Modifier.testTag("beauty_disable_live")) { Text("关闭 Live") }
+                }
+                if (ui.modePreference != CameraModePreference.PHOTO) {
+                    TextButton(onClick = { onModePreferenceChange(CameraModePreference.PHOTO) }, enabled = !capturing,
+                        modifier = Modifier.testTag("beauty_select_photo")) { Text("切到普通模式") }
+                }
+                Text(if (ui.saveStrategy == SaveStrategy.ORIGINAL_WITH_RECIPE)
+                    "当前只保存原片；美颜照片需从「编辑刚拍照片」另存副本。"
+                    else "当前会分别保存原片和美颜效果副本。", style = MaterialTheme.typography.labelSmall)
+                if (ui.beautyPreset != BeautyPreset.OFF) {
+                    Text(ui.beautyPreviewState.text, style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier.testTag("beauty_preview_state"))
+                }
             }
             BeautyPreset.entries.forEach { preset ->
                 DropdownMenuItem(
                     text = { Text("自然上镜：${preset.label}${if (ui.beautyPreset == preset) " ✓" else ""}") },
-                    enabled = !capturing,
-                    onClick = { onBeautyPresetChange(preset) },
+                    enabled = !capturing && BeautyCompatibilityPolicy.rejection(preset, ui.livePhotoEnabled,
+                        ui.modePreference == CameraModePreference.PHOTO) == null,
+                    onClick = { onBeautyPresetChange(preset); expanded = false },
                     modifier = Modifier.testTag("beauty_${preset.name.lowercase()}"),
                 )
             }
@@ -846,7 +873,7 @@ private fun CreativeCaptureControl(
                         Text("无声 Live")
                         Text(
                             when {
-                                ui.livePhotoEnabled && ui.livePhotoAvailable -> "Motion Photo 已就绪；主文件保持原始颜色"
+                                ui.livePhotoEnabled && ui.livePhotoAvailable -> "无声录制已开启；缓存不足时保存普通照片"
                                 ui.livePhotoEnabled -> ui.liveFallbackReason ?: "不可用时自动保存普通照片"
                                 else -> "Android Motion Photo；不录音、不申请麦克风"
                             },
@@ -1598,12 +1625,13 @@ private fun guidanceText(ui: ViewfinderUi): String {
         is GuidanceStage.Observing -> "正在观察画面"
         is GuidanceStage.Action -> promptText(stage.cue.audience, stage.cue.text, ui.subjectCaptionsEnabled)
         is GuidanceStage.Ready -> when {
+        !stage.qualityConfirmed && stage.readinessIssue != null -> checkNotNull(stage.readinessIssue).text
             ui.poseCueText != null -> ui.poseCueText
             stage.qualityConfirmed && ui.subjectCaptionsEnabled && stage.retainedSubjectCue != null ->
                 checkNotNull(stage.retainedSubjectCue).text
             ui.guidance.canRequestOptional -> "发现新建议，可再优化"
             stage.qualityConfirmed -> "可以拍了"
-            else -> "画面还可调整，快门仍可使用"
+            else -> "快门可随时使用"
         }
         is GuidanceStage.Optional -> promptText(stage.cue.audience, stage.cue.text, ui.subjectCaptionsEnabled)
         GuidanceStage.Capturing -> ui.saveStatusText ?: "正在捕获并保存"

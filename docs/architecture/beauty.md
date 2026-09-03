@@ -12,4 +12,6 @@
 
 CPU 与 GPU 的低分辨率采样、浮点精度及 JPEG 编码不同，只共享算法/预设/几何约定，不承诺逐像素一致。关键点椭圆不是皮肤/遮挡分割：眼镜、胡须、发丝、手挡脸与快速运动需真实样张验证。
 
+状态反馈：`BeautyPreviewState` 从同一帧的预设、热门禁、有效单脸/蒙版、输出变换和原始时间戳计算；仅实际 render/swap 成功后回传，状态变化最多每 500ms 通知一次 UI，处理归零不等待 UI 节流。回调需匹配当前 FaceStore，已释放/替换效果不能回写新会话。状态不记录关键点、帧或身份，也不是肤质效果已验收的证据。
+
 API 依据：[CameraEffect](https://developer.android.com/reference/androidx/camera/core/CameraEffect)、[SurfaceProcessor](https://developer.android.com/reference/androidx/camera/core/SurfaceProcessor)、[SurfaceOutput](https://developer.android.com/reference/androidx/camera/core/SurfaceOutput)、[Fast Guided Filter](https://arxiv.org/abs/1505.00996)。接口按 pinned release 编译检查，设备效果/性能 NotRun，不承诺像素完全一致。

@@ -4,6 +4,7 @@ import android.graphics.SurfaceTexture
 import android.opengl.EGLSurface
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.view.Surface
 import androidx.camera.core.CameraEffect
 import androidx.camera.core.ProcessingException
@@ -16,14 +17,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 class BeautyCameraEffect(private val processor: BeautySurfaceProcessor) : CameraEffect(
     PREVIEW, processor.executor, processor, { processor.reportFailure(it) },
 ), AutoCloseable {
-    constructor(store:BeautyFaceStore,preset:()->BeautyPreset,enabled:()->Boolean,onFailure:(Throwable)->Unit) :
-        this(BeautySurfaceProcessor(store,preset,enabled,onFailure))
+    constructor(store:BeautyFaceStore,preset:()->BeautyPreset,enabled:()->Boolean,
+        onState:(BeautyPreviewState)->Unit = {},onFailure:(Throwable)->Unit) :
+        this(BeautySurfaceProcessor(store,preset,enabled,onFailure,onState))
     override fun close() = processor.close()
 }
 
 class BeautySurfaceProcessor internal constructor(
     private val store:BeautyFaceStore, private val preset:()->BeautyPreset,
     private val enabled:()->Boolean, private val onFailure:(Throwable)->Unit,
+    private val onState:(BeautyPreviewState)->Unit = {},
 ) : SurfaceProcessor, AutoCloseable {
     private val thread=HandlerThread("beauty-gl").apply { start() }
     private val handler=Handler(thread.looper)
@@ -36,6 +39,8 @@ class BeautySurfaceProcessor internal constructor(
     private var currentInput:SurfaceTexture?=null
     private val originalTransform=FloatArray(16)
     private val outputTransform=FloatArray(16)
+    private var reportedState: BeautyPreviewState? = null
+    private var reportedAtMs = 0L
 
     private fun renderer() = gl ?: BeautyGlRenderer().also { gl=it }
     internal fun reportFailure(error:Throwable) {
@@ -96,10 +101,19 @@ class BeautySurfaceProcessor internal constructor(
                 val transform=output.sensorToBufferTransform.beautyTransform()?.inverse()?.let { inverse ->
                     frame?.sensorToAnalysis?.times(inverse)
                 }
+                val selectedPreset = preset()
+                val processingEnabled = enabled()
+                val state = BeautyPreviewState.resolve(selectedPreset, processingEnabled, frame, transform, st.timestamp)
                 renderer.render(inputs.getValue(st).id,true,outputTransform,window,
                     output.size.width,output.size.height,frame?.mask,transform,
-                    if(enabled()) preset() else BeautyPreset.OFF,freshness)
+                    if(state == BeautyPreviewState.ACTIVE) selectedPreset else BeautyPreset.OFF,freshness)
                 renderer.swap(window)
+                val nowMs = SystemClock.elapsedRealtime()
+                if (state != reportedState && (reportedState == null || nowMs - reportedAtMs >= 500L)) {
+                    reportedState = state
+                    reportedAtMs = nowMs
+                    onState(state)
+                }
             }
         } catch(error:Exception) {
             inputs[st]?.request?.invalidate()

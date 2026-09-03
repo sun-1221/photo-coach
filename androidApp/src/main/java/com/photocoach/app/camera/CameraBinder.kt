@@ -5,6 +5,7 @@ import com.photocoach.app.beauty.BeautyPreset
 import com.photocoach.app.beauty.BeautyCameraEffect
 import com.photocoach.app.beauty.BeautyFaceStore
 import com.photocoach.app.beauty.BeautyCompatibilityPolicy
+import com.photocoach.app.beauty.BeautyPreviewState
 import android.net.Uri
 import android.os.StatFs
 import android.os.SystemClock
@@ -22,6 +23,7 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.core.SessionConfig
 import androidx.camera.core.UseCaseGroup
+import androidx.camera.core.UseCase
 import androidx.camera.core.ViewPort
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
@@ -142,7 +144,8 @@ class CameraBinder(
     private var recorder: Recorder? = null
     private var activeRecording: Recording? = null
     private var activeVideoFile: File? = null
-    private var recordingStartedElapsedMs: Long = 0L
+    private val recordingSession = LiveRecordingSession()
+    private val ownedUseCases = mutableSetOf<UseCase>()
     private var livePhotoAvailable = false
     private var liveFallbackReason: String? = null
     private var onLiveFallback: ((String) -> Unit)? = null
@@ -186,6 +189,7 @@ class CameraBinder(
         onLiveFallback: (String) -> Unit,
         onError: (Throwable) -> Unit,
         onBeautyFallback: (String) -> Unit = {},
+        onBeautyPreviewState: (BeautyPreviewState) -> Unit = {},
     ): CameraCapabilities? {
         val cameraProvider = provider ?: run {
             onError(IllegalStateException("camera provider missing"))
@@ -194,7 +198,7 @@ class CameraBinder(
         this.previewView = previewView
         this.onLiveFallback = onLiveFallback
         stopRollingRecording(deleteFile = true)
-        cameraProvider.unbindAll()
+        unbindOwnedUseCases()
         beautyEffect?.close()
         beautyEffect = null
         beautyStore?.clear()
@@ -206,7 +210,10 @@ class CameraBinder(
         beautyStore = faceStore
         if (beautyRejection != null) mainExecutor.execute { onBeautyFallback(beautyRejection) }
         val effect = faceStore?.let { store ->
-            BeautyCameraEffect(store, { beautyPreset }, { ThermalPolicy.forLevel(thermalLevel).stylePreviewEnabled }) {
+            BeautyCameraEffect(store, { beautyPreset }, { ThermalPolicy.forLevel(thermalLevel).stylePreviewEnabled },
+                onState = { state -> mainExecutor.execute {
+                    if (beautyStore === store) onBeautyPreviewState(state)
+                } }) {
                 mainExecutor.execute {
                     if (beautyStore === store) onBeautyFallback("美颜预览不可用，正在关闭效果；拍摄结束后恢复普通预览")
                 }
@@ -311,6 +318,12 @@ class CameraBinder(
         fun sessionSupported(video: VideoCapture<Recorder>): Boolean = runCatching {
             cameraProvider.getCameraInfo(selector).isSessionConfigSupported(sessionConfig(video))
         }.getOrDefault(true)
+        fun bindOwned(selector: CameraSelector, video: VideoCapture<Recorder>?): Camera {
+            val group = useCaseGroup(video)
+            // Register before binding: even a partially failed attempt belongs to this binder.
+            ownedUseCases.addAll(group.useCases)
+            return cameraProvider.bindToLifecycle(owner, selector, group)
+        }
 
         if (liveRequested) {
             var liveBindingError: Exception? = null
@@ -318,9 +331,9 @@ class CameraBinder(
                 candidates = liveCandidates,
                 isSupported = { (_, candidateVideo) -> sessionSupported(candidateVideo) },
                 tryBind = { (_, candidateVideo) ->
-                    cameraProvider.unbindAll()
+                    unbindOwnedUseCases()
                     try {
-                        camera = cameraProvider.bindToLifecycle(owner, selector, useCaseGroup(candidateVideo))
+                        camera = bindOwned(selector, candidateVideo)
                         true
                     } catch (error: Exception) {
                         liveBindingError = error
@@ -334,7 +347,7 @@ class CameraBinder(
                 livePhotoAvailable = true
             }
             if (!livePhotoAvailable) {
-                cameraProvider.unbindAll()
+                unbindOwnedUseCases()
                 recorder = null
                 videoCapture = null
                 liveFallbackReason = when {
@@ -343,7 +356,7 @@ class CameraBinder(
                     else -> "当前相机会话不支持 Live 与实时指导，已回退普通照片"
                 }
                 try {
-                    camera = cameraProvider.bindToLifecycle(owner, selector, useCaseGroup(null))
+                    camera = bindOwned(selector, null)
                     activeMode = SuggestedMode.PHOTO
                 } catch (fallbackError: Exception) {
                     onError(fallbackError)
@@ -352,9 +365,9 @@ class CameraBinder(
             }
         } else {
             try {
-                camera = cameraProvider.bindToLifecycle(owner, boundSelector, useCaseGroup(null))
+                camera = bindOwned(boundSelector, null)
             } catch (bindingError: Exception) {
-                cameraProvider.unbindAll()
+                unbindOwnedUseCases()
                 if (choice is ExtensionChoice.Enabled || beautyEffect != null) {
                     if (beautyEffect != null) {
                         beautyEffect?.close()
@@ -363,7 +376,7 @@ class CameraBinder(
                         mainExecutor.execute { onBeautyFallback("美颜绑定失败，正在尝试普通预览") }
                     }
                     try {
-                        camera = cameraProvider.bindToLifecycle(owner, selector, useCaseGroup(null))
+                        camera = bindOwned(selector, null)
                         activeMode = SuggestedMode.PHOTO
                         extensionFallback = true
                     } catch (fallbackError: Exception) {
@@ -539,8 +552,8 @@ class CameraBinder(
         }
         val shutterElapsedMs = SystemClock.elapsedRealtime()
         val recordingAtShutter = activeRecording
-        val recordingStartedAtShutterMs = recordingStartedElapsedMs
-        val liveWindowReadyAtShutter = recordingAtShutter != null &&
+        val recordingStartedAtShutterMs = recordingSession.startedElapsedMs
+        val liveWindowReadyAtShutter = recordingAtShutter != null && recordingStartedAtShutterMs != null &&
             MotionTemporaryPolicy.hasFullShutterWindow(shutterElapsedMs - recordingStartedAtShutterMs)
         capture.takePicture(
             ImageCapture.OutputFileOptions.Builder(file).build(),
@@ -565,7 +578,7 @@ class CameraBinder(
                         onSaveError = onSaveError,
                         onSaveProgress = onSaveProgress,
                         shutterElapsedMs = shutterElapsedMs,
-                        recordingStartedElapsedMs = recordingStartedAtShutterMs,
+                        recordingStartedElapsedMs = recordingStartedAtShutterMs ?: shutterElapsedMs,
                     )
                     runCatching { writeJournal(requireNotNull(pendingCapture)) }.onFailure { error ->
                         captureInProgress = false
@@ -585,7 +598,7 @@ class CameraBinder(
                             writeJournal(pending)
                             videoExecutor.schedule(
                                 { runCatching { recordingAtShutter?.stop() } },
-                                LIVE_POST_SHUTTER_MS,
+                                (LIVE_POST_SHUTTER_MS - (SystemClock.elapsedRealtime() - shutterElapsedMs)).coerceAtLeast(0L),
                                 TimeUnit.MILLISECONDS,
                             )
                         } else {
@@ -681,13 +694,20 @@ class CameraBinder(
 
     fun release() {
         stopRollingRecording(deleteFile = true)
-        provider?.unbindAll()
+        unbindOwnedUseCases()
         beautyEffect?.close()
         beautyStore?.clear()
+        beautyStore = null
         analyzer?.close()
         analysisExecutor.shutdown()
         saveExecutor.shutdown()
         videoExecutor.shutdown()
+    }
+
+    private fun unbindOwnedUseCases() {
+        if (ownedUseCases.isEmpty()) return
+        provider?.unbind(*ownedUseCases.toTypedArray())
+        ownedUseCases.clear()
     }
 
     private fun capabilities(
@@ -749,14 +769,16 @@ class CameraBinder(
             return
         }
         activeVideoFile = file
-        recordingStartedElapsedMs = SystemClock.elapsedRealtime()
+        val token = recordingSession.begin()
         try {
             val options = FileOutputOptions.Builder(file)
                 .setFileSizeLimit(MotionTemporaryPolicy.MAX_RECORDING_BYTES)
                 .setDurationLimitMillis(MotionTemporaryPolicy.MAX_RECORDING_DURATION_MS)
                 .build()
             // Deliberately do not call withAudioEnabled(): this recording has no audio track and needs no permission.
-            activeRecording = activeRecorder.prepareRecording(context, options).start(mainExecutor, ::onVideoRecordEvent)
+            activeRecording = activeRecorder.prepareRecording(context, options).start(mainExecutor) { event ->
+                onVideoRecordEvent(token, file, event)
+            }
         } catch (error: Throwable) {
             file.delete()
             activeVideoFile = null
@@ -765,9 +787,17 @@ class CameraBinder(
         }
     }
 
-    private fun onVideoRecordEvent(event: VideoRecordEvent) {
+    private fun onVideoRecordEvent(token: Long, file: File, event: VideoRecordEvent) {
+        if (!recordingSession.owns(token)) {
+            if (event is VideoRecordEvent.Finalize) file.delete()
+            return
+        }
+        if (event is VideoRecordEvent.Start) {
+            recordingSession.started(token, SystemClock.elapsedRealtime())
+            return
+        }
         if (event !is VideoRecordEvent.Finalize) return
-        val file = (event.outputOptions as? FileOutputOptions)?.file ?: activeVideoFile
+        if (!recordingSession.finish(token)) return
         val durationUs = event.recordingStats.recordedDurationNanos / 1_000L
         activeRecording = null
         activeVideoFile = null
@@ -775,11 +805,14 @@ class CameraBinder(
         val limitReached = event.error == VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED ||
             event.error == VideoRecordEvent.Finalize.ERROR_FILE_SIZE_LIMIT_REACHED
         when {
-            pending?.spec?.livePhotoRequested == true && !pending.coordinator.snapshot.motionPhotoFallback && file != null -> {
-                finalizeLiveCapture(pending, file, durationUs, event.takeIf { it.hasError() && !limitReached }?.cause)
+            pending?.spec?.livePhotoRequested == true && !pending.coordinator.snapshot.motionPhotoFallback -> {
+                val error = if (event.hasError() && !limitReached) {
+                    event.cause ?: IOException("Live 编码结束错误：${event.error}")
+                } else null
+                finalizeLiveCapture(pending, file, durationUs, error)
             }
             else -> {
-                file?.delete()
+                file.delete()
                 if (event.hasError() && !limitReached) {
                     downgradeLive("Live 编码中断，已回退普通照片")
                 } else if (livePhotoAvailable) {
@@ -836,6 +869,7 @@ class CameraBinder(
     }
 
     private fun stopRollingRecording(deleteFile: Boolean) {
+        recordingSession.invalidate()
         if (deleteFile) livePhotoAvailable = false
         val recording = activeRecording
         activeRecording = null
