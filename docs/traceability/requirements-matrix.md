@@ -10,6 +10,8 @@
 
 ## 状态词汇
 
+2026-09-03 后续修复见 [Ready、Live 与美颜入口修复记录](fix-ready-live-beauty-2026-09-03.md)：补充 Ready 实时原因、美颜可见入口/实际状态和录制会话隔离；JVM 198/198、新 APK 构建/lint 通过。小米手机本轮未连接，新包目标机测试尚未完成，FR-07/31/38 的 Device/Acceptance 不升级。
+
 | 维度 | 允许值 | 含义 |
 | --- | --- | --- |
 | Scope | InScope / GateLocked / ApprovedSeparate / Deferred | 分别表示当前 P-1、需 Go 后的 P0、单独批准但不进入 P-1 的 P1、后期 |
