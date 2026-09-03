@@ -6,6 +6,8 @@
 - 自动化结果登记：2026-09-01 coach JVM Pass、Android JVM Pass；2026-08-31 ExplainApi .NET 3/3 Pass；详见[验证报告](validation-report.md)
 - 真机结论：没有小米 14 Pro 证据的项目一律保持 NotRun
 
+2026-09-03 联合真机补充：见[Ready、Live/保存与自然上镜回归](combined-device-validation-2026-09-03.md)。目标机核心仪器 14/14 通过，但美颜相机重绑失败、UI 集未完成，实际快门操作被系统输入权限拒绝。下表的完整 Device/Acceptance NotRun 不因此升级；本次部分证据不覆盖 Live 播放、真实成片保存或美颜观感。
+
 ## 状态词汇
 
 | 维度 | 允许值 | 含义 |
