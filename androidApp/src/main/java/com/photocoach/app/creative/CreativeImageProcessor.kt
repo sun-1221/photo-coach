@@ -1,6 +1,8 @@
 package com.photocoach.app.creative
 
 import android.content.ContentResolver
+import com.photocoach.app.beauty.BeautyPreset
+import com.photocoach.app.beauty.BeautyStillProcessor
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -26,6 +28,7 @@ data class ProcessedImage(
     val height: Int,
     val wasDownsampled: Boolean,
     val portraitConservativeStrengthApplied: Boolean = false,
+    val beautyWarning: String? = null,
 )
 
 class CreativeImageProcessor(
@@ -52,16 +55,18 @@ class CreativeImageProcessor(
         edit: EditAdjustment = EditAdjustment(),
         quality: DerivativeQuality = DerivativeQuality.FULL,
         portraitRegion: NormalizedFaceRegion? = null,
+        beautyPreset: BeautyPreset = BeautyPreset.OFF,
     ): ProcessedImage {
         val exif = runCatching { ExifInterface(source.absolutePath) }.getOrNull()
         return processDecoded(
-            decoded = decodeFile(source, pixelLimit(quality)),
+            decoded = decodeFile(source, pixelLimit(quality), mutable = beautyPreset != BeautyPreset.OFF),
             orientation = exif?.let(::exifRotation) ?: 0,
             safeExif = exif?.let(::safeExif) ?: emptyMap(),
             style = style,
             edit = edit,
             quality = quality,
             portraitRegion = portraitRegion,
+            beautyPreset = beautyPreset,
         )
     }
 
@@ -72,18 +77,20 @@ class CreativeImageProcessor(
         edit: EditAdjustment,
         quality: DerivativeQuality = DerivativeQuality.FULL,
         portraitRegion: NormalizedFaceRegion? = null,
+        beautyPreset: BeautyPreset = BeautyPreset.OFF,
     ): ProcessedImage {
         val exif = runCatching {
             resolver.openInputStream(source)?.use { ExifInterface(it) }
         }.getOrNull()
         return processDecoded(
-            decodeUri(resolver, source, pixelLimit(quality)),
+            decodeUri(resolver, source, pixelLimit(quality), mutable = beautyPreset != BeautyPreset.OFF),
             exif?.let(::exifRotation) ?: 0,
             exif?.let(::safeExif) ?: emptyMap(),
             style,
             edit,
             quality,
             portraitRegion,
+            beautyPreset,
         )
     }
 
@@ -95,10 +102,12 @@ class CreativeImageProcessor(
         edit: EditAdjustment,
         quality: DerivativeQuality,
         portraitRegion: NormalizedFaceRegion?,
+        beautyPreset: BeautyPreset,
     ): ProcessedImage {
         return try {
             ProcessingResourceScope<Bitmap, File>(Bitmap::recycle, { it.delete() }).use { resources ->
                 val source = resources.ownSource(decoded.bitmap)
+                val beautyWarning = BeautyStillProcessor.apply(source, orientation, beautyPreset)
                 val rotated = orientation == 90 || orientation == 270
                 val outputWidth = if (rotated) source.height else source.width
                 val outputHeight = if (rotated) source.width else source.height
@@ -141,6 +150,7 @@ class CreativeImageProcessor(
                     outputHeight,
                     decoded.wasDownsampled,
                     guarded,
+                    beautyWarning,
                 )
             }
         } catch (error: OutOfMemoryError) {
@@ -148,7 +158,7 @@ class CreativeImageProcessor(
         }
     }
 
-    private fun decodeFile(source: File, pixelLimit: Long): DecodedBitmap {
+    private fun decodeFile(source: File, pixelLimit: Long, mutable: Boolean = false): DecodedBitmap {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(source.absolutePath, bounds)
         validateBounds(bounds)
@@ -158,6 +168,7 @@ class CreativeImageProcessor(
                 source.absolutePath,
                 BitmapFactory.Options().apply {
                     inSampleSize = sample
+                    inMutable = mutable
                     inPreferredConfig = Bitmap.Config.ARGB_8888
                 },
             )
@@ -167,7 +178,7 @@ class CreativeImageProcessor(
         return DecodedBitmap(bitmap, sample > 1)
     }
 
-    private fun decodeUri(resolver: ContentResolver, source: Uri, pixelLimit: Long): DecodedBitmap {
+    private fun decodeUri(resolver: ContentResolver, source: Uri, pixelLimit: Long, mutable: Boolean = false): DecodedBitmap {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         resolver.openInputStream(source)?.use { BitmapFactory.decodeStream(it, null, bounds) }
             ?: throw IOException("无法读取原片")
@@ -180,6 +191,7 @@ class CreativeImageProcessor(
                     null,
                     BitmapFactory.Options().apply {
                         inSampleSize = sample
+                        inMutable = mutable
                         inPreferredConfig = Bitmap.Config.ARGB_8888
                     },
                 )

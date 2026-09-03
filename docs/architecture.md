@@ -82,6 +82,8 @@ Live 仅在显式开启且四用例能力允许时增加无音轨 VideoCapture�
 
 ## 4. 质量属性
 
+独立批准的 P1 自然上镜见[美颜架构](architecture/beauty.md)：只在启用时添加 CameraEffect.PREVIEW；原始分析/捕获不加工，Face 数值快照、GPU 表面处理和离线副本不进入 coach 模块。此有限例外由需求第 4.6 节批准。
+
 | 属性 | 架构约束 | 证据边界 |
 | --- | --- | --- |
 | 实时性 | latest-only 分析；约 300ms 信号输入；600ms/三帧防抖；主线程 reducer 避免旧帧竞态 | JVM 能测状态机；250–300ms/p95 与热量需目标机 |
@@ -138,6 +140,7 @@ Live 仅在显式开启且四用例能力允许时增加无音轨 VideoCapture�
 | [相机与感知专题](architecture/camera-and-perception.md) | 三/四用例、ViewPort、Extensions、3A、亮度、Pose、遮挡与隐私 |
 | [口令与讲解 API 专题](architecture/guidance-and-explain.md) | latest-only 事件、reducer、稳定门槛、TTS、恢复口令与 ExplainApi |
 | [P1 创意、保存与 Motion Photo](architecture/creative-and-storage.md) | 领域模型、颜色矩阵、连拍、资源上限、SaveCoordinator、MediaStore 与 Motion Photo |
+| [自然上镜 v1](architecture/beauty.md) | 独立批准的 PREVIEW-only GPU、端侧关键点快照、按需 CPU 导出和失败/热回退 |
 | [架构决策记录](architecture/decisions.md) | 原生方案、共享边界、C# 服务、iOS 方向、明确不选项和历史比较 |
 | [产品入口](requirement.md) | Scope、Go/No-Go、跨版本硬约束和隐私 |
 | [追踪矩阵](traceability/requirements-matrix.md) | Requirement → Phase → Acceptance → Component → Evidence → Status |
@@ -147,7 +150,7 @@ Live 仅在显式开启且四用例能力允许时增加无音轨 VideoCapture�
 
 本地自动化门禁依次为 `.\gradlew.bat :coach:test` 与 `.\gradlew.bat :androidApp:testDebugUnitTest`；ExplainApi 契约另运行 `dotnet test .\ExplainApi.sln`。命令通过只代表相应 JVM/.NET 覆盖，不替代仪器、真机、P-1 对照实验或 P0/P1 产品验收。
 
-本轮自动化结果（2026-08-31）：coach JVM Pass；Android JVM Pass；ExplainApi .NET Pass（3/3）。Android instrumented tests 与全部目标机证据仍为 NotRun。完整命令和边界见[验证报告](traceability/validation-report.md)。
+历史自动化结果（2026-08-31）：coach JVM Pass；Android JVM Pass；ExplainApi .NET Pass（3/3），当时 Android instrumented 与目标机证据为 NotRun。2026-09-03 自然上镜实施新增模拟器仪器验证，详见[美颜验证报告](traceability/beauty-validation-2026-09-03.md)；不据此改写历史或目标机 NotRun。完整文档基线见[验证报告](traceability/validation-report.md)。
 
 当前没有小米 14 Pro 连接证据。快捷焦段/EXIF、真实 Zoom/EV、Extensions 三用例、AE/AF 3A、画幅成片、音量键倒计时、连续 100 张保存、遮挡/污渍误报、十二种风格和七项编辑真实颜色、连拍间隔/热量/推荐有效性、HyperOS MediaStore 分阶段保存/收藏/回收站、广色域/Ultra HDR，以及 Live 四用例绑定、编码、裁剪和 Motion Photo 播放全部为 NotRun。唯一详细状态以[目标机真机矩阵](acceptance/acceptance-plan.md#92-目标机真机矩阵)和[追踪矩阵](traceability/requirements-matrix.md)为准。
 

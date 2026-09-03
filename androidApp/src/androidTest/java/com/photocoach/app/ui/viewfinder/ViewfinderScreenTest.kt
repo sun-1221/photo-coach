@@ -22,6 +22,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.dp
 import com.photocoach.app.AppViewModel
+import com.photocoach.app.beauty.BeautyPreset
 import com.photocoach.app.ViewfinderUi
 import com.photocoach.app.CreativePhotoUi
 import com.photocoach.app.CreativeResultUi
@@ -92,9 +93,10 @@ class ViewfinderScreenTest {
         }
 
         assertEquals(CueId.MOVE_CLOSER, viewModel.ui.value.guidance.currentCue?.id)
-        render(viewModel.ui.value)
+        val state = viewModel.ui.value
+        render(state)
         compose.onNodeWithText("1/2").assertIsDisplayed()
-        compose.onNodeWithText("走近一步").assertIsDisplayed()
+        compose.onNodeWithText(requireNotNull(state.guidance.currentCue).text).assertIsDisplayed()
     }
 
     @Test
@@ -261,6 +263,7 @@ class ViewfinderScreenTest {
                 GuidanceStage.Ready(
                     optionalAvailable = false,
                     retainedSubjectCue = subjectCue,
+                    qualityConfirmed = true,
                 ),
             ),
         )
@@ -308,10 +311,11 @@ class ViewfinderScreenTest {
 
         compose.onNodeWithTag("creative_capture_menu").assertIsDisplayed().performClick()
         CreativeStyle.entries.forEach { creativeStyle ->
-            compose.onNodeWithTag("creative_style_${creativeStyle.name.lowercase()}").assertIsDisplayed()
+            compose.onNodeWithTag("creative_style_${creativeStyle.name.lowercase()}").performScrollTo().assertIsDisplayed()
         }
-        compose.onNodeWithTag("creative_style_sunset_gold").performClick()
-        compose.onNodeWithTag("three_shot_burst").performClick()
+        compose.onNodeWithTag("creative_style_sunset_gold").performScrollTo().performClick()
+        compose.onNodeWithTag("three_shot_burst").performScrollTo().performClick()
+        compose.onNodeWithTag("parameter_suggestion_0").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("光线偏弱；架稳手机并使用 3 秒倒计时").assertIsDisplayed()
         compose.runOnIdle {
             assertEquals(CreativeStyle.SUNSET_GOLD, style.get())
@@ -420,6 +424,25 @@ class ViewfinderScreenTest {
         compose.runOnIdle { assertEquals(1, openCount.get()) }
     }
 
+    @Test
+    fun beautyMenuOffersExplicitPresetsWithoutBlockingShutter() {
+        val selected = AtomicReference(BeautyPreset.OFF)
+        render(ui(GuidanceStage.Ready(optionalAvailable = false)), onBeautyPresetChange = selected::set)
+        compose.onNodeWithTag("shutter").assertIsEnabled()
+        compose.onNodeWithTag("creative_capture_menu").performClick()
+        compose.onNodeWithTag("beauty_natural").performScrollTo().performClick()
+        compose.runOnIdle { assertEquals(BeautyPreset.NATURAL, selected.get()) }
+        compose.onNodeWithTag("shutter").assertIsEnabled()
+    }
+
+    @Test
+    fun beautyFallbackIsVisibleAndKeepsShutterAvailable() {
+        render(ui(GuidanceStage.Ready(optionalAvailable = false)).copy(beautyPreviewWarning = "美颜不可用，普通预览继续"))
+        compose.onNodeWithTag("preview_effect_error").assertIsDisplayed()
+        compose.onNodeWithText("美颜不可用，普通预览继续").assertIsDisplayed()
+        compose.onNodeWithTag("shutter").assertIsDisplayed().assertIsEnabled()
+    }
+
     private fun render(
         state: ViewfinderUi,
         onIntent: (ShotIntent) -> Unit = {},
@@ -432,6 +455,7 @@ class ViewfinderScreenTest {
         onOpenCreativeResult: () -> Unit = {},
         onSelectCreativePhoto: (String) -> Unit = {},
         onSaveCreativeCopy: () -> Unit = {},
+        onBeautyPresetChange: (BeautyPreset) -> Unit = {},
     ) {
         compose.setContent {
             PhotoCoachTheme {
@@ -471,6 +495,7 @@ class ViewfinderScreenTest {
                     onOpenCreativeResult = onOpenCreativeResult,
                     onSelectCreativePhoto = onSelectCreativePhoto,
                     onSaveCreativeCopy = onSaveCreativeCopy,
+                    onBeautyPresetChange = onBeautyPresetChange,
                 )
             }
         }

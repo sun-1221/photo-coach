@@ -3,6 +3,7 @@ package com.photocoach.app.camera
 import android.content.Context
 import android.os.Build
 import android.os.PowerManager
+import androidx.core.content.ContextCompat
 
 enum class ThermalLevel { NORMAL, LIGHT, MODERATE, SEVERE, CRITICAL, UNKNOWN }
 
@@ -43,8 +44,11 @@ object ThermalPolicy {
 
 class ThermalStateMonitor(context: Context, private val onChanged: (ThermalLevel) -> Unit) {
     private val powerManager = context.getSystemService(PowerManager::class.java)
-    private val mainExecutor = context.mainExecutor
-    private val listener = PowerManager.OnThermalStatusChangedListener { onChanged(ThermalPolicy.fromPlatformStatus(it)) }
+    private val mainExecutor = ContextCompat.getMainExecutor(context)
+    // Created only from the API 29+ guarded paths, never during construction on API 26/27.
+    private val listener by lazy {
+        PowerManager.OnThermalStatusChangedListener { onChanged(ThermalPolicy.fromPlatformStatus(it)) }
+    }
     private var registered = false
 
     fun start() {

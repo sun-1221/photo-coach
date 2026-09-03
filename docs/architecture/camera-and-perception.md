@@ -17,7 +17,7 @@
 - `Preview`、`ImageAnalysis`、`ImageCapture` 使用同一 4:3 或 16:9 `AspectRatioStrategy`；分析分辨率只作为性能偏好，不能用 UI 裁切伪造画幅。
 - 成片：`ExtensionsManager` 查询后，扩展可用且 `isImageAnalysisSupported` 为真，才开 `NIGHT` / `BOKEH` / `HDR` 并同时绑分析；扩展不可用，或扩展可用但分析绑不上，则标准 Preview + Analysis + Capture，口令照给。不要为成片卸掉分析（需求：保口令、弃扩展成片）
 - 不要用 `ExtensionSessionConfig` 当默认绑定（该会话不支持 ImageAnalysis）
-- 第一版不开 `FACE_RETOUCH`，不接自研滤镜 / LUT / `CameraEffect` 调色层
+- P-1/P0 和原有全局风格不开 `FACE_RETOUCH` 或自研 LUT/CameraEffect 调色层；需求第 4.6 节另行批准的[自然上镜](beauty.md)仅标准 Photo 添加 PREVIEW-only 局部纹理处理。
 - 第 12.2 节 P1 创意风格不进入 CameraX use case：原片仍由上述捕获管线生成，取景预览仅在支持时对 `PreviewView` 使用共享颜色矩阵的显示效果，导出在捕获后的受限内存处理器中另存兼容 SDR 副本；任何效果失败都回退原片，不能卸载或替换 `ImageAnalysis`
 - 能力状态在每次镜头/画幅/模式重绑后重建：`ZoomState` 提供连续缩放范围，`ExposureState` 提供 EV 索引范围与步长，Extensions 双查询提供可选模式。旧设置越界时夹紧，旧模式不可用时回到“自动/普通”，不沿用陈旧能力。
 - 长按预览使用 `FocusMeteringAction` 的 AF+AE 且关闭自动取消；成功后显示锁定并提供显式 `cancelFocusAndMetering` 解除。任何 use case 重绑都会把 UI 锁定状态恢复为未锁，避免状态假死。

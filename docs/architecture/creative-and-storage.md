@@ -30,11 +30,13 @@
 1. 每次 `ImageCapture` 先落到 App cache 的 captureId 临时 JPEG；在受限采样上计算清晰度/曝光，不阻塞分析执行器。空间预检覆盖原片、处理峰值与所选兼容副本策略。
 2. 默认只把原 JPEG 用 `ContentResolver.insert`、`DATE_TAKEN`、`IS_PENDING=1`、`RELATIVE_PATH=DCIM/拍照教练` 发布，再把编辑配方原子写入 App 私有目录。原片 URI 一经成功便不因配方、风格或编辑失败而撤销、覆盖或删除。
 3. 非原图风格默认不生成效果 JPEG。用户明确“另存副本”或主动开启“原片+效果自动保存”后，才按完整质量/省空间档解码并生成独立兼容 SDR JPEG。原片压缩图像字节不经过转码，且不宣称 Ultra HDR 真机通过。
-4. 派生图先读取尺寸边界，再按不超过 12,000,000 像素（省空间档使用更低上限）计算 `inSampleSize`。Canvas + `ColorMatrixColorFilter` 应用共享矩阵，JPEG 编码到新临时文件，再作为独立 MediaStore 项发布。
+4. 派生图先读取尺寸边界，再按不超过 12,000,000 像素（省空间档使用更低上限）计算 `inSampleSize`。若捕获配方主动开启[自然上镜](beauty.md)，在有界可变源 Bitmap 上重新端侧检测并逐行混合美颜；随后 Canvas + `ColorMatrixColorFilter` 应用共享矩阵，JPEG 编码到新临时文件，再作为独立 MediaStore 项发布。OFF 保持原路径。
 5. 轻编辑始终从用户选择的原片 URI 解码，沿用相同像素上限与矩阵构造；保存按钮只调用“另存副本”。安全 EXIF 复制仅允许方向、尺寸、拍摄时间和相机厂商/型号，排除 GPS、缩略图、MakerNote 与未知标签。
 6. 保存 journal 在每个发布阶段前后原子落盘；启动恢复会续写 journal 中仍有效的 pending MediaStore 行，只删除无源文件、无法恢复或已完成的遗留项，同时清理过期临时视频，再按 captureId/阶段恢复，不允许重复 MediaStore 项。任何解码/变换/编码/MediaStore 异常都返回部分成功状态和单阶段重试入口。
 7. 所有临时文件在成功、失败和取消路径清理；处理中最多持有源/目标两个受限 ARGB Bitmap，目标写完立即释放。OutOfMemoryError 作为受控失败回到原片，不继续重试扩大内存。
 8. MediaStore 发布成功即进入非阻塞成功反馈，不显示保存确认页。最近一次 `CreativeResultUi` 仅作为内存中的可选编辑上下文保留，默认隐藏且不参与快门门禁；用户从创意菜单主动打开时才展示选片、编辑和拍后操作。
+
+自然上镜使用 `beautyPreset + beautyEngineVersion` 捕获快照，随 `CapturedPhoto`、配方和 journal 传递；重试/另存不读取当前美颜开关。配方 schema 2、journal schema 3，旧记录缺字段为 OFF；不记录脸部坐标。额外 CPU 工作数组只按宽高各 1/4 的单通道图分配，RGB 逐通道处理，不新增全尺寸 Bitmap 或像素数组。ML Kit 内部内存与实际堆峰值仍需目标机测量。
 
 连拍由 Activity 顺序调用现有单张 `ImageCapture` 三次，不并行提交 capture 请求。ViewModel 中的 `BurstSession` 在整批期间保持快门禁用，收集每张原片 URI 和评分；三张完成后按总分、清晰度、曝光、序号稳定排序。单张失败即暂停余下请求，已发布照片不删除；只有用户明确重试成功才继续本批，否则终止。
 

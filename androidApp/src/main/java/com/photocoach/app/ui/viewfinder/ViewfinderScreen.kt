@@ -73,6 +73,7 @@ import com.photocoach.app.camera.CapturePriority
 import com.photocoach.app.camera.CaptureTimer
 import com.photocoach.app.camera.DerivativeQuality
 import com.photocoach.app.camera.SaveStrategy
+import com.photocoach.app.beauty.BeautyPreset
 import com.photocoach.app.camera.ThermalPolicy
 import com.photocoach.app.creative.CreativeColorMatrix
 import com.photocoach.app.creative.CreativeStyle
@@ -130,6 +131,7 @@ fun ViewfinderScreen(
     onSaveStrategyChange: (SaveStrategy) -> Unit = {},
     onDerivativeQualityChange: (DerivativeQuality) -> Unit = {},
     onLivePhotoChange: (Boolean) -> Unit = {},
+    onBeautyPresetChange: (BeautyPreset) -> Unit = {},
     onApplyParameterSuggestion: (ParameterSuggestion) -> Unit = {},
     onOpenCreativeResult: () -> Unit = {},
     onSelectCreativePhoto: (String) -> Unit = {},
@@ -203,6 +205,7 @@ fun ViewfinderScreen(
                     onSaveStrategyChange = onSaveStrategyChange,
                     onDerivativeQualityChange = onDerivativeQualityChange,
                     onLivePhotoChange = onLivePhotoChange,
+                    onBeautyPresetChange = onBeautyPresetChange,
                     onApplyParameterSuggestion = onApplyParameterSuggestion,
                     onOpenCreativeResult = onOpenCreativeResult,
                     modifier = Modifier.width(320.dp).fillMaxSize(),
@@ -250,6 +253,7 @@ fun ViewfinderScreen(
                     onSaveStrategyChange = onSaveStrategyChange,
                     onDerivativeQualityChange = onDerivativeQualityChange,
                     onLivePhotoChange = onLivePhotoChange,
+                    onBeautyPresetChange = onBeautyPresetChange,
                     onApplyParameterSuggestion = onApplyParameterSuggestion,
                     onOpenCreativeResult = onOpenCreativeResult,
                     modifier = Modifier
@@ -399,7 +403,9 @@ private fun PreviewPane(
                 modifier = Modifier.fillMaxSize(),
             )
             FocusOverlay(ui)
-            previewEffectError?.let { message ->
+            val beautyMessage = ui.beautyPreviewWarning ?: if (ui.beautyPreset != BeautyPreset.OFF &&
+                !ThermalPolicy.forLevel(ui.thermalLevel).stylePreviewEnabled) "热策略已暂停实时美颜，原片和指导继续" else null
+            listOfNotNull(previewEffectError, beautyMessage).joinToString("；").takeIf(String::isNotBlank)?.let { message ->
                 Text(
                     text = message,
                     color = Color.White,
@@ -555,6 +561,7 @@ private fun OperationPanel(
     onSaveStrategyChange: (SaveStrategy) -> Unit,
     onDerivativeQualityChange: (DerivativeQuality) -> Unit,
     onLivePhotoChange: (Boolean) -> Unit,
+    onBeautyPresetChange: (BeautyPreset) -> Unit,
     onApplyParameterSuggestion: (ParameterSuggestion) -> Unit,
     onOpenCreativeResult: () -> Unit,
     modifier: Modifier,
@@ -662,6 +669,7 @@ private fun OperationPanel(
                     onSaveStrategyChange = onSaveStrategyChange,
                     onDerivativeQualityChange = onDerivativeQualityChange,
                     onLivePhotoChange = onLivePhotoChange,
+                    onBeautyPresetChange = onBeautyPresetChange,
                     onApplyParameterSuggestion = onApplyParameterSuggestion,
                     onOpenCreativeResult = onOpenCreativeResult,
                 )
@@ -722,6 +730,7 @@ private fun CreativeCaptureControl(
     onSaveStrategyChange: (SaveStrategy) -> Unit,
     onDerivativeQualityChange: (DerivativeQuality) -> Unit,
     onLivePhotoChange: (Boolean) -> Unit,
+    onBeautyPresetChange: (BeautyPreset) -> Unit,
     onApplyParameterSuggestion: (ParameterSuggestion) -> Unit,
     onOpenCreativeResult: () -> Unit,
 ) {
@@ -735,7 +744,8 @@ private fun CreativeCaptureControl(
         ) {
             Text(
                 ui.burstProgress?.let { "$it/3" }
-                    ?: if (ui.threeShotBurstEnabled) "${ui.creativeStyle.label}·3张" else ui.creativeStyle.label,
+                    ?: if (ui.beautyPreset != BeautyPreset.OFF) "上镜·${ui.beautyPreset.label}"
+                    else if (ui.threeShotBurstEnabled) "${ui.creativeStyle.label}·3张" else ui.creativeStyle.label,
                 maxLines = 1,
             )
         }
@@ -751,6 +761,24 @@ private fun CreativeCaptureControl(
                 tag = "creative_style_original",
                 onStyleChange = onStyleChange,
             )
+            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text("自然上镜（独立 P1）", style = MaterialTheme.typography.titleSmall)
+                Text("复用本机人脸关键点，局部柔化纹理；不上传、不改脸形。原片不变，效果需另存；预览近似。仅普通模式，与 Live 互斥。",
+                    style = MaterialTheme.typography.labelSmall)
+                Text("初始参数待小米 14 Pro 真机校准", style = MaterialTheme.typography.labelSmall)
+                if (ui.beautyPreset != BeautyPreset.OFF && !ThermalPolicy.forLevel(ui.thermalLevel).stylePreviewEnabled) {
+                    Text("热策略已暂停实时美颜；配方仍按拍摄时预设保存", style = MaterialTheme.typography.labelSmall)
+                }
+                ui.beautyPreviewWarning?.let { Text(it, style = MaterialTheme.typography.labelSmall) }
+            }
+            BeautyPreset.entries.forEach { preset ->
+                DropdownMenuItem(
+                    text = { Text("自然上镜：${preset.label}${if (ui.beautyPreset == preset) " ✓" else ""}") },
+                    enabled = !capturing,
+                    onClick = { onBeautyPresetChange(preset) },
+                    modifier = Modifier.testTag("beauty_${preset.name.lowercase()}"),
+                )
+            }
             StyleMenuSection(
                 title = "推荐",
                 styles = ui.styleDiscovery.recommendations.map { it.style },
@@ -1063,6 +1091,10 @@ private fun CreativeResultPanel(
                 edit = if (result.compareOriginal) EditAdjustment(styleStrength = 0f) else result.edit,
                 modifier = Modifier.fillMaxWidth().height(220.dp),
             )
+            if (result.selectedPhoto.beautyPreset != BeautyPreset.OFF) {
+                Text("美颜·${result.selectedPhoto.beautyPreset.label}将在另存时应用；此处预览仅显示颜色编辑，对比原图为未美颜原片",
+                    style = MaterialTheme.typography.labelSmall, modifier = Modifier.testTag("beauty_export_notice"))
+            }
             if (result.photos.size > 1) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                     result.photos.forEach { photo ->

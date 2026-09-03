@@ -14,8 +14,11 @@
 | ADR-004 标准能力与回退 | Accepted | 使用 CameraX/Camera2/MediaStore 标准能力探测 | 不使用小米私有 API；Extensions/Live/效果失败须回退 |
 | ADR-005 非破坏 P1 创意 | Accepted / ApprovedSeparate | 原片优先、确定性矩阵、captureId 分阶段保存、无声 Motion Photo | 不覆盖原片、不倒灌 P-1 指标、不宣称未做的真机通过 |
 | ADR-006 暂不选择项 | Accepted | 不用 MAUI/Flutter CameraView 做主取景器，不自研 ISP/RAW，不为纯 C# 牺牲 CameraX 可控性 | 若将来推翻必须新 ADR 和产品范围决策 |
+| ADR-007 自然上镜 v1 | Accepted / ApprovedSeparate | 独立默认 OFF，PREVIEW-only GPU 与按需 CPU 纹理平滑 | 仅普通后摄单人，Live/Extensions 互斥；不改变旧风格、不声称真机通过 |
 
 ## 原始决策依据
+
+ADR-007（2026-09-03，用户批准，ApprovedSeparate）：自然上镜 v1 独立默认关闭，PREVIEW-only GPU 局部平滑及按需 SDR 副本。仅对此允许 CameraEffect/局部纹理处理；原有风格不磨皮、P-1/P0 隔离、原图与权限门禁不变。详见[beauty.md](beauty.md)，目标机验收 NotRun。
 
 以下段落从重构前架构整段迁入，保留当时的比较、数据点与明确不选项；它们是决策依据，不替代当前依赖事实和验收状态。
 

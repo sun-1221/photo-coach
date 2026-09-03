@@ -2,6 +2,7 @@ package com.photocoach.app.camera
 
 import com.photocoach.app.creative.CaptureId
 import java.io.File
+import com.photocoach.app.beauty.BeautyPreset
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -43,6 +44,8 @@ data class SaveJournal(
     val outputLength: Long? = null,
     val verifiedAssetStages: Set<String> = emptySet(),
     val stageRetryCounts: Map<String, Int> = emptyMap(),
+    val beautyPreset: String = BeautyPreset.OFF.name,
+    val beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
 ) {
     init {
         CaptureId(captureId)
@@ -52,7 +55,7 @@ data class SaveJournal(
 
     val key: String get() = "${captureId}_S${sequence.toString().padStart(2, '0')}"
 
-    companion object { const val CURRENT_SCHEMA_VERSION = 2 }
+    companion object { const val CURRENT_SCHEMA_VERSION = 3 }
 }
 
 class SaveJournalStore(private val directory: File) {

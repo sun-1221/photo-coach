@@ -1,6 +1,7 @@
 package com.photocoach.app.camera
 
 import android.content.Context
+import com.photocoach.app.beauty.BeautyPreset
 import androidx.core.content.edit
 import com.photocoach.coach.SuggestedMode
 import com.photocoach.app.creative.CreativeStyle
@@ -53,6 +54,7 @@ data class CameraUserSettings(
     val saveStrategy: SaveStrategy = SaveStrategy.ORIGINAL_WITH_RECIPE,
     val derivativeQuality: DerivativeQuality = DerivativeQuality.FULL,
     val livePhotoEnabled: Boolean = false,
+    val beautyPreset: BeautyPreset = BeautyPreset.OFF,
 ) {
     companion object {
         val DEFAULT = CameraUserSettings()
@@ -71,6 +73,7 @@ data class CameraUserSettings(
             saveStrategy: String? = null,
             derivativeQuality: String? = null,
             livePhotoEnabled: Boolean? = null,
+            beautyPreset: String? = null,
         ): CameraUserSettings = CameraUserSettings(
             voiceEnabled = voiceEnabled ?: DEFAULT.voiceEnabled,
             subjectCaptionsEnabled = subjectCaptionsEnabled ?: DEFAULT.subjectCaptionsEnabled,
@@ -85,6 +88,7 @@ data class CameraUserSettings(
             saveStrategy = enumValueOrDefault(saveStrategy, DEFAULT.saveStrategy),
             derivativeQuality = enumValueOrDefault(derivativeQuality, DEFAULT.derivativeQuality),
             livePhotoEnabled = livePhotoEnabled ?: DEFAULT.livePhotoEnabled,
+            beautyPreset = BeautyPreset.restore(beautyPreset),
         )
 
         private inline fun <reified T : Enum<T>> enumValueOrDefault(value: String?, fallback: T): T =
@@ -109,6 +113,7 @@ class CameraSettingsStore(context: Context) {
         saveStrategy = preferences.getString(KEY_SAVE_STRATEGY, null),
         derivativeQuality = preferences.getString(KEY_DERIVATIVE_QUALITY, null),
         livePhotoEnabled = preferences.booleanOrNull(KEY_LIVE_PHOTO),
+        beautyPreset = preferences.getString(KEY_BEAUTY, null),
     )
 
     fun save(settings: CameraUserSettings) {
@@ -126,6 +131,7 @@ class CameraSettingsStore(context: Context) {
             putString(KEY_SAVE_STRATEGY, settings.saveStrategy.name)
             putString(KEY_DERIVATIVE_QUALITY, settings.derivativeQuality.name)
             putBoolean(KEY_LIVE_PHOTO, settings.livePhotoEnabled)
+            putString(KEY_BEAUTY, settings.beautyPreset.name)
         }
     }
 
@@ -150,5 +156,6 @@ class CameraSettingsStore(context: Context) {
         const val KEY_SAVE_STRATEGY = "save_strategy"
         const val KEY_DERIVATIVE_QUALITY = "derivative_quality"
         const val KEY_LIVE_PHOTO = "live_photo_enabled"
+        const val KEY_BEAUTY = "beauty_preset"
     }
 }

@@ -1,6 +1,8 @@
 package com.photocoach.app
 
 import android.app.Application
+import com.photocoach.app.beauty.BeautyPreset
+import com.photocoach.app.beauty.BeautyCompatibilityPolicy
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -116,6 +118,8 @@ data class CreativePhotoUi(
     val effectWasDownsampled: Boolean,
     val warning: String? = null,
     val isMotionPhoto: Boolean = false,
+    val beautyPreset: BeautyPreset = BeautyPreset.OFF,
+    val beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
 )
 
 data class CreativeResultUi(
@@ -141,6 +145,8 @@ data class CreativeExportRequest(
     val captureId: CaptureId,
     val sequence: Int,
     val takenAtMillis: Long,
+    val beautyPreset: BeautyPreset = BeautyPreset.OFF,
+    val beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
 )
 
 data class ViewfinderUi(
@@ -183,6 +189,8 @@ data class ViewfinderUi(
     val saveStrategy: SaveStrategy = SaveStrategy.ORIGINAL_WITH_RECIPE,
     val derivativeQuality: DerivativeQuality = DerivativeQuality.FULL,
     val livePhotoEnabled: Boolean = false,
+    val beautyPreset: BeautyPreset = BeautyPreset.OFF,
+    val beautyPreviewWarning: String? = null,
     val livePhotoAvailable: Boolean = false,
     val liveFallbackReason: String? = null,
     val saveStatusText: String? = null,
@@ -226,6 +234,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var activeCaptureId: CaptureId? = null
     private var captureTakenAtMillis: Long = 0L
     private var captureLiveRequested = false
+    private var captureSettings = CameraUserSettings.DEFAULT
+    private var captureEdit = EditAdjustment()
     private val capturedPhotos = mutableListOf<CreativePhotoUi>()
     private var editHistory = EditHistory()
     private val analyzedFrames = MutableSharedFlow<AnalyzedFrame>(
@@ -253,6 +263,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             saveStrategy = initialSettings.saveStrategy,
             derivativeQuality = initialSettings.derivativeQuality,
             livePhotoEnabled = initialSettings.livePhotoEnabled,
+            beautyPreset = initialSettings.beautyPreset,
         ),
     )
     val ui: StateFlow<ViewfinderUi> = _ui
@@ -575,6 +586,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setModePreference(preference: CameraModePreference) {
+        if (_ui.value.beautyPreset != BeautyPreset.OFF && preference != CameraModePreference.PHOTO) {
+            showControlMessage("自然上镜仅支持普通模式，请先关闭自然上镜")
+            return
+        }
         val requested = preference.requestedMode
         if (requested != null && requested !in _ui.value.availableModes) {
             showControlMessage("当前镜头不支持这个模式")
@@ -602,6 +617,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 saveStrategy = defaults.saveStrategy,
                 derivativeQuality = defaults.derivativeQuality,
                 livePhotoEnabled = defaults.livePhotoEnabled,
+                beautyPreset = defaults.beautyPreset,
+                beautyPreviewWarning = null,
                 flashSetting = FlashSetting.OFF,
                 countdownSeconds = null,
                 controlMessage = "相机设置已恢复默认",
@@ -702,12 +719,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setLivePhotoEnabled(enabled: Boolean) {
         if (_ui.value.guidance.stage is GuidanceStage.Capturing) return
+        if (enabled && _ui.value.beautyPreset != BeautyPreset.OFF) {
+            showControlMessage("Live 与自然上镜互斥，请先关闭自然上镜")
+            return
+        }
         _ui.update {
             it.copy(
                 livePhotoEnabled = enabled,
                 controlMessage = if (enabled) "正在准备无声 Live；不可用时会保存普通照片" else "Live 已关闭",
             )
         }
+        persistSettings()
+    }
+
+    fun setBeautyPreset(preset: BeautyPreset) {
+        if (_ui.value.guidance.stage is GuidanceStage.Capturing) return
+        val state = _ui.value
+        val rejection = BeautyCompatibilityPolicy.rejection(preset, state.livePhotoEnabled,
+            state.modePreference == CameraModePreference.PHOTO)
+        if (rejection != null) { showControlMessage(rejection); return }
+        _ui.update { it.copy(beautyPreset = preset, beautyPreviewWarning = null,
+            controlMessage = if (preset == BeautyPreset.OFF) "自然上镜已关闭" else
+                "自然上镜·${preset.label}：原片仍保留，效果按保存策略另存；仅本机处理") }
+        persistSettings()
+    }
+
+    fun onBeautyFallback(reason: String) {
+        _ui.update { it.copy(beautyPreset = BeautyPreset.OFF, beautyPreviewWarning = reason, controlMessage = reason) }
         persistSettings()
     }
 
@@ -860,6 +898,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val thermalPolicy = ThermalPolicy.forLevel(_ui.value.thermalLevel)
             captureExpectedCount = if (_ui.value.threeShotBurstEnabled && thermalPolicy.allowNewBurst) BurstSession.SHOT_COUNT else 1
             captureStyle = _ui.value.creativeStyle
+            captureSettings = cameraSettings()
+            captureEdit = EditAdjustment(styleStrength = _ui.value.creativeStyleStrength)
             activeCaptureId = CaptureIdentity.create()
             captureTakenAtMillis = System.currentTimeMillis()
             captureLiveRequested = _ui.value.livePhotoEnabled && thermalPolicy.allowNewLive
@@ -908,11 +948,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             sequence = capturedPhotos.size + 1,
             takenAtMillis = captureTakenAtMillis,
             style = captureStyle,
-            edit = EditAdjustment(styleStrength = state.creativeStyleStrength),
-            saveStrategy = state.saveStrategy,
-            derivativeQuality = state.derivativeQuality,
+            edit = captureEdit,
+            saveStrategy = captureSettings.saveStrategy,
+            derivativeQuality = captureSettings.derivativeQuality,
             livePhotoRequested = captureLiveRequested,
             portraitRegion = portraitRegion,
+            beautyPreset = captureSettings.beautyPreset,
         )
     }
 
@@ -935,6 +976,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             effectWasDownsampled = photo.effectWasDownsampled,
             warning = photo.warning,
             isMotionPhoto = photo.isMotionPhoto,
+            beautyPreset = photo.beautyPreset,
+            beautyEngineVersion = photo.beautyEngineVersion,
         )
         capturedPhotos += item
         if (captureExpectedCount == BurstSession.SHOT_COUNT) {
@@ -1084,6 +1127,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             captureId = CaptureId(result.selectedPhoto.captureId),
             sequence = result.selectedPhoto.sequence,
             takenAtMillis = captureTakenAtMillis,
+            beautyPreset = result.selectedPhoto.beautyPreset,
+            beautyEngineVersion = result.selectedPhoto.beautyEngineVersion,
         )
     }
 
@@ -1097,6 +1142,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             style = _ui.value.creativeStyle,
             edit = result.edit,
             sourceIsMotionPhoto = selected.isMotionPhoto,
+            beautyPreset = selected.beautyPreset,
+            beautyEngineVersion = selected.beautyEngineVersion,
         )
     }
 
@@ -1107,7 +1154,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 recentPhoto = copy.uri.toString(),
                 creativeResult = result.copy(
                     exportInProgress = false,
-                    message = if (copy.wasDownsampled) "已另存副本（为控制内存已适度降采样），原片未改动" else "已另存副本，原片未改动",
+                    message = listOfNotNull(
+                        if (copy.wasDownsampled) "已另存副本（为控制内存已适度降采样），原片未改动" else "已另存副本，原片未改动",
+                        copy.warning,
+                    ).joinToString("；"),
                 ),
             )
         }
@@ -1312,6 +1362,7 @@ private fun ViewfinderUi.toCameraUserSettings(): CameraUserSettings = CameraUser
     saveStrategy = saveStrategy,
     derivativeQuality = derivativeQuality,
     livePhotoEnabled = livePhotoEnabled,
+    beautyPreset = beautyPreset,
 )
 
 private fun SaveStage.label(): String = when (this) {

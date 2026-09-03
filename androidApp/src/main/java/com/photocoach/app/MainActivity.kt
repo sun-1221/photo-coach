@@ -36,6 +36,7 @@ import com.photocoach.app.camera.CameraBinder
 import com.photocoach.app.camera.CameraModePreference
 import com.photocoach.app.camera.CapturePriority
 import com.photocoach.app.camera.CaptureSpec
+import com.photocoach.app.beauty.BeautyPreset
 import com.photocoach.app.camera.ThermalStateMonitor
 import com.photocoach.app.camera.ThermalRebindGate
 import com.photocoach.app.creative.ParameterAction
@@ -131,8 +132,12 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(ui.flashSetting) {
                     camera.setFlash(ui.flashSetting)
                 }
-                LaunchedEffect(ui.aspectRatio, ui.capturePriority, ui.modePreference, ui.livePhotoEnabled) {
-                    if (permissionState == PermissionState.GRANTED) prepareAndRebind()
+                LaunchedEffect(ui.beautyPreset) { camera.updateBeautyPreset(ui.beautyPreset) }
+                LaunchedEffect(ui.aspectRatio, ui.capturePriority, ui.modePreference, ui.livePhotoEnabled,
+                    ui.beautyPreset != BeautyPreset.OFF) {
+                    // Reuse the pending rebind gate: never interrupt an in-flight original save.
+                    if (permissionState == PermissionState.GRANTED &&
+                        thermalRebindGate.onThermalChanged(cameraOperationInProgress())) prepareAndRebind()
                 }
                 LaunchedEffect(ui.guidance.stage, ui.creativeResultVisible, ui.cameraError) {
                     if (captureAdmissionState().blocked) cancelScheduledCapture()
@@ -214,6 +219,7 @@ class MainActivity : ComponentActivity() {
                         onSaveStrategyChange = viewModel::setSaveStrategy,
                         onDerivativeQualityChange = viewModel::setDerivativeQuality,
                         onLivePhotoChange = viewModel::setLivePhotoEnabled,
+                        onBeautyPresetChange = viewModel::setBeautyPreset,
                         onApplyParameterSuggestion = ::applyParameterSuggestion,
                         onOpenCreativeResult = viewModel::openCreativeResult,
                         onSelectCreativePhoto = viewModel::selectCreativePhoto,
@@ -295,6 +301,7 @@ class MainActivity : ComponentActivity() {
                     extras = { viewModel.extras(camera.hasTelephotoPreset()) },
                     onSignals = viewModel::onFrame,
                     onLiveFallback = viewModel::onLiveFallback,
+                    onBeautyFallback = viewModel::onBeautyFallback,
                     onError = { viewModel.markCameraError(getString(R.string.camera_busy)) },
                 ) ?: return@launch
                 camera.setFlash(viewModel.ui.value.flashSetting)
@@ -449,6 +456,8 @@ class MainActivity : ComponentActivity() {
             captureId = request.captureId,
             sequence = request.sequence,
             takenAtMillis = request.takenAtMillis,
+            beautyPreset = request.beautyPreset,
+            beautyEngineVersion = request.beautyEngineVersion,
             onSaved = viewModel::onCreativeExported,
             onError = viewModel::onCreativeExportFailed,
         )

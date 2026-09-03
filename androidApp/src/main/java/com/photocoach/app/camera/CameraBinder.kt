@@ -1,6 +1,10 @@
 package com.photocoach.app.camera
 
 import android.content.Context
+import com.photocoach.app.beauty.BeautyPreset
+import com.photocoach.app.beauty.BeautyCameraEffect
+import com.photocoach.app.beauty.BeautyFaceStore
+import com.photocoach.app.beauty.BeautyCompatibilityPolicy
 import android.net.Uri
 import android.os.StatFs
 import android.os.SystemClock
@@ -91,11 +95,14 @@ data class CapturedPhoto(
     val warning: String? = null,
     val isMotionPhoto: Boolean = false,
     val completedSaveStages: Set<SaveStage> = emptySet(),
+    val beautyPreset: BeautyPreset = BeautyPreset.OFF,
+    val beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
 )
 
 data class ExportedCopy(
     val uri: Uri,
     val wasDownsampled: Boolean,
+    val warning: String? = null,
 )
 
 class PartialSaveException(message: String, val originalUri: Uri, cause: Throwable) : IOException(message, cause)
@@ -110,6 +117,8 @@ data class CaptureSpec(
     val derivativeQuality: DerivativeQuality,
     val livePhotoRequested: Boolean,
     val portraitRegion: NormalizedFaceRegion? = null,
+    val beautyPreset: BeautyPreset = BeautyPreset.OFF,
+    val beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
 )
 
 class CameraBinder(
@@ -144,6 +153,11 @@ class CameraBinder(
     private var smoothZoomRatio = 1f
     private val prepareMutex = Mutex()
     @Volatile private var thermalLevel: ThermalLevel = ThermalLevel.UNKNOWN
+    @Volatile private var beautyPreset = BeautyPreset.OFF
+    private var beautyEffect: BeautyCameraEffect? = null
+    private var beautyStore: BeautyFaceStore? = null
+
+    fun updateBeautyPreset(preset: BeautyPreset) { beautyPreset = preset }
 
     var flashSetting: FlashSetting = FlashSetting.OFF
         private set
@@ -171,6 +185,7 @@ class CameraBinder(
         onSignals: (Signals, OverlayGeometry) -> Unit,
         onLiveFallback: (String) -> Unit,
         onError: (Throwable) -> Unit,
+        onBeautyFallback: (String) -> Unit = {},
     ): CameraCapabilities? {
         val cameraProvider = provider ?: run {
             onError(IllegalStateException("camera provider missing"))
@@ -180,6 +195,24 @@ class CameraBinder(
         this.onLiveFallback = onLiveFallback
         stopRollingRecording(deleteFile = true)
         cameraProvider.unbindAll()
+        beautyEffect?.close()
+        beautyEffect = null
+        beautyStore?.clear()
+        val beautyRejection = BeautyCompatibilityPolicy.rejection(settings.beautyPreset,
+            settings.livePhotoEnabled, settings.modePreference == CameraModePreference.PHOTO)
+        val beautyRequested = settings.beautyPreset != BeautyPreset.OFF && beautyRejection == null
+        beautyPreset = if (beautyRequested) settings.beautyPreset else BeautyPreset.OFF
+        val faceStore = if (beautyRequested) BeautyFaceStore() else null
+        beautyStore = faceStore
+        if (beautyRejection != null) mainExecutor.execute { onBeautyFallback(beautyRejection) }
+        val effect = faceStore?.let { store ->
+            BeautyCameraEffect(store, { beautyPreset }, { ThermalPolicy.forLevel(thermalLevel).stylePreviewEnabled }) {
+                mainExecutor.execute {
+                    if (beautyStore === store) onBeautyFallback("美颜预览不可用，正在关闭效果；拍摄结束后恢复普通预览")
+                }
+            }
+        }
+        beautyEffect = effect
         camera = null
         aeAfLocked = false
         analyzer?.close()
@@ -206,6 +239,7 @@ class CameraBinder(
             onFrame = onSignals,
             minimumFrameIntervalMs = { ThermalPolicy.forLevel(thermalLevel).analysisIntervalMs },
             poseAndBackgroundEnabled = { ThermalPolicy.forLevel(thermalLevel).poseAndBackgroundEnabled },
+            onBeautyFrame = faceStore?.let { store -> { frame -> store.publish(frame) } },
         )
         analyzer = coachAnalyzer
 
@@ -217,7 +251,7 @@ class CameraBinder(
 
         val thermalPolicy = ThermalPolicy.forLevel(thermalLevel)
         val liveRequested = settings.livePhotoEnabled && thermalPolicy.allowNewLive
-        val effectiveRequestedMode = if (liveRequested) SuggestedMode.PHOTO else requestedMode
+        val effectiveRequestedMode = if (liveRequested || beautyRequested) SuggestedMode.PHOTO else requestedMode
         val choice = ExtensionPolicy.resolve(
             requested = effectiveRequestedMode,
             isAvailable = { mode -> extensions?.isExtensionAvailable(selector, mode) == true },
@@ -268,6 +302,7 @@ class CameraBinder(
             .addUseCase(analysis)
             .addUseCase(capture)
             .apply { if (video != null) addUseCase(video) }
+            .apply { beautyEffect?.let { addEffect(it) } }
             .build()
         fun sessionConfig(video: VideoCapture<Recorder>): SessionConfig =
             SessionConfig.Builder(listOf(preview, analysis, capture, video))
@@ -320,7 +355,13 @@ class CameraBinder(
                 camera = cameraProvider.bindToLifecycle(owner, boundSelector, useCaseGroup(null))
             } catch (bindingError: Exception) {
                 cameraProvider.unbindAll()
-                if (choice is ExtensionChoice.Enabled) {
+                if (choice is ExtensionChoice.Enabled || beautyEffect != null) {
+                    if (beautyEffect != null) {
+                        beautyEffect?.close()
+                        beautyEffect = null
+                        faceStore?.clear()
+                        mainExecutor.execute { onBeautyFallback("美颜绑定失败，正在尝试普通预览") }
+                    }
                     try {
                         camera = cameraProvider.bindToLifecycle(owner, selector, useCaseGroup(null))
                         activeMode = SuggestedMode.PHOTO
@@ -606,10 +647,13 @@ class CameraBinder(
         takenAtMillis: Long,
         onSaved: (ExportedCopy) -> Unit,
         onError: (Throwable) -> Unit,
+        beautyPreset: BeautyPreset = BeautyPreset.OFF,
+        beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
     ) {
         saveExecutor.execute {
             val result = runCatching {
-                val processed = creativeProcessor.process(context.contentResolver, source, style, edit, quality)
+                val preset = BeautyPreset.requireSupported(beautyPreset.name, beautyEngineVersion)
+                val processed = creativeProcessor.process(context.contentResolver, source, style, edit, quality, beautyPreset = preset)
                 try {
                     val uri = CaptureSaver.publish(
                         context.contentResolver,
@@ -617,7 +661,7 @@ class CameraBinder(
                         CaptureIdentity.displayName(captureId, CaptureAssetKind.EDITED, sequence, takenAtMillis),
                         takenAtMillis,
                     )
-                    ExportedCopy(uri, processed.wasDownsampled)
+                    ExportedCopy(uri, processed.wasDownsampled, processed.beautyWarning)
                 } finally {
                     processed.file.delete()
                 }
@@ -638,6 +682,8 @@ class CameraBinder(
     fun release() {
         stopRollingRecording(deleteFile = true)
         provider?.unbindAll()
+        beautyEffect?.close()
+        beautyStore?.clear()
         analyzer?.close()
         analysisExecutor.shutdown()
         saveExecutor.shutdown()
@@ -903,6 +949,8 @@ class CameraBinder(
                         style = pending.spec.style,
                         edit = pending.spec.edit,
                         sourceIsMotionPhoto = pending.isMotionPhoto,
+                        beautyPreset = pending.spec.beautyPreset,
+                        beautyEngineVersion = pending.spec.beautyEngineVersion,
                     ),
                 )
                 pending.recipeWritten = true
@@ -918,9 +966,11 @@ class CameraBinder(
                         pending.spec.edit,
                         pending.spec.derivativeQuality,
                         pending.spec.portraitRegion,
+                        BeautyPreset.requireSupported(pending.spec.beautyPreset.name, pending.spec.beautyEngineVersion),
                     )
                     pending.derivativeFile = processed.file
                     pending.effectWasDownsampled = processed.wasDownsampled
+                    processed.beautyWarning?.let { pending.warnings += it }
                     if (processed.portraitConservativeStrengthApplied) {
                         pending.warnings += "已使用人像保守强度"
                     }
@@ -962,7 +1012,7 @@ class CameraBinder(
         runStage(pending, SaveStage.COMPLETE) { Unit }
 
         val originalUri = requireNotNull(pending.originalUri)
-        if (!pending.derivativeRequested && !CreativeColorMatrix.isIdentity(CreativeColorMatrix.forSelection(pending.spec.style, pending.spec.edit))) {
+        if (!pending.derivativeRequested && (pending.spec.beautyPreset != BeautyPreset.OFF || !CreativeColorMatrix.isIdentity(CreativeColorMatrix.forSelection(pending.spec.style, pending.spec.edit)))) {
             warnings += "已保存原片和编辑配方；效果 JPEG 仅在你明确另存时生成"
         }
         return CapturedPhoto(
@@ -975,6 +1025,8 @@ class CameraBinder(
             warning = warnings.joinToString("；").ifBlank { null },
             isMotionPhoto = pending.isMotionPhoto,
             completedSaveStages = pending.coordinator.snapshot.completed,
+            beautyPreset = pending.spec.beautyPreset,
+            beautyEngineVersion = pending.spec.beautyEngineVersion,
         )
     }
 
@@ -1225,6 +1277,8 @@ class CameraBinder(
                             style,
                             edit,
                             record.motionPhotoRequested && !record.motionPhotoFallback && packaged != null,
+                            BeautyPreset.requireSupported(record.beautyPreset, record.beautyEngineVersion),
+                            record.beautyEngineVersion,
                         ),
                     )
                     record = record.copy(completedStages = record.completedStages + SaveStage.RECIPE_WRITE.name)
@@ -1296,7 +1350,8 @@ class CameraBinder(
                         record.styleStrength,
                     )
                     val derivative = record.derivativePath?.let(::File)?.takeIf(File::isFile)
-                        ?: creativeProcessor.process(source, style, edit, quality).file
+                        ?: creativeProcessor.process(source, style, edit, quality,
+                            beautyPreset = BeautyPreset.requireSupported(record.beautyPreset, record.beautyEngineVersion)).file
                     record = record.copy(
                         derivativePath = derivative.absolutePath,
                         completedStages = record.completedStages + SaveStage.DERIVATIVE_GENERATE.name,
@@ -1437,8 +1492,9 @@ class CameraBinder(
         val coordinator: SaveCoordinator = SaveCoordinator(
             SavePlan(
                 motionPhotoRequested = spec.livePhotoRequested,
-                derivativeRequested = spec.saveStrategy == SaveStrategy.ORIGINAL_AND_EFFECT &&
-                    !CreativeColorMatrix.isIdentity(CreativeColorMatrix.forSelection(spec.style, spec.edit)),
+                derivativeRequested = BeautyCompatibilityPolicy.needsDerivative(spec.beautyPreset,
+                    spec.saveStrategy == SaveStrategy.ORIGINAL_AND_EFFECT,
+                    CreativeColorMatrix.isIdentity(CreativeColorMatrix.forSelection(spec.style, spec.edit))),
             ),
         ),
     ) {
@@ -1454,6 +1510,8 @@ class CameraBinder(
             packagedPath = packagedFile?.absolutePath,
             displayName = displayName,
             style = spec.style.name,
+            beautyPreset = spec.beautyPreset.name,
+            beautyEngineVersion = spec.beautyEngineVersion,
             exposureStops = spec.edit.exposureStops,
             contrast = spec.edit.contrast,
             saturation = spec.edit.saturation,

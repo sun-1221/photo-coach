@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -35,12 +36,14 @@ class ViewfinderActivityTest {
             compose.onNodeWithText("同意并继续").performClick()
         }
         compose.waitUntil(timeoutMillis = 10_000) {
-            compose.onAllNodesWithText("可以拍了").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("shutter").fetchSemanticsNodes().any {
+                !it.config.contains(SemanticsProperties.Disabled)
+            }
         }
-        Thread.sleep(2_500)
+        compose.onNodeWithTag("shutter").assertIsEnabled()
 
         val appliedRatio = AtomicReference<Float?>()
-        compose.activity.runOnUiThread { appliedRatio.set(compose.activity.zoomBy(2f)) }
+        compose.runOnIdle { appliedRatio.set(compose.activity.zoomBy(2f)) }
 
         if (appliedRatio.get() == null) {
             assertTrue(

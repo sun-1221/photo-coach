@@ -21,8 +21,8 @@
 
 ## 0. 权威结构与迁移控制
 
-- FR-01～FR-31 的唯一当前权威定义在[需求追踪矩阵](traceability/requirements-matrix.md)；本入口不复制第二份定义。
-- UX-01～UX-38 的唯一当前权威定义在[分阶段验收](acceptance/acceptance-plan.md)；P-1 与已批准 P1 分表，完整 P0 的专属 UX 缺口明确保留。
+- FR-01～FR-38 的唯一当前权威定义在[需求追踪矩阵](traceability/requirements-matrix.md)；本入口不复制第二份定义。
+- UX-01～UX-49 的唯一当前权威定义在[分阶段验收](acceptance/acceptance-plan.md)；P-1 与已批准 P1 分表，完整 P0 的专属 UX 缺口明确保留。
 - 交互、指导、场景、P1 创意与后期规格是当前规范附件；研究文件只承载依据，不改变 Scope、Delivery 或 Verification。
 - [零丢失迁移登记](traceability/migration-register.md)逐项映射重构前章节、表格、规则和技术决定，状态只使用 Retained、Moved、Consolidated、ConflictPending。
 - [历史快照](history/2026-08-31-pre-refactor/README.md)是重构前完整副本，明确为非当前规范；唯一性检查排除历史目录。
@@ -149,6 +149,7 @@
 | 六类姿势库与摄影技巧建议 | 否 | 否 | 是 | 是 |
 | 场景化风格推荐、强度、最近与收藏 | 否 | 否 | 是 | 是 |
 | 人像保守强度、发布后校验与热降级 | 否 | 否 | 是 | 是 |
+| 独立默认关闭的自然上镜纹理平滑 | 否 | 否 | 单独批准，限第 4.6 节 | 后续另评估 |
 | 合影 | 否 | 否 | 否 | 见[合影后期范围](requirements/deferred-scope.md#13-合影后期保留第一版不做) |
 | 被拍者主用户 / 互拍切换 | 否 | 否 | 否 | 见[角色切换后期范围](requirements/deferred-scope.md#14-角色切换后期保留第一版不做入口) |
 
@@ -202,6 +203,12 @@ P1 和明确不做项见[P1 创意层与决策边界](requirements/p1-creative.m
 
 ---
 
+### 4.6 P1 自然上镜 v1（ApprovedSeparate）
+
+2026-09-03 用户明确批准自研并要求执行：新增独立默认关闭的自然上镜 OFF / NATURAL / SOFT，仅限当前小米 14 Pro 后摄单人标准 Photo。不解锁 P0，不扩展前摄、机型、权限或网络。用户偏好与性能收益仍需独立验证，不宣称需求假设已通过。
+
+这是既有禁止 CameraEffect/局部磨皮规则的有限例外：只允许 PREVIEW-only SurfaceProcessor 局部纹理平滑，以及明确另存/主动双保存产生的 SDR 副本；十二种全局风格（包括自然人像不磨皮）语义不变。原图字节、实时分析、快门优先和 P-1 证据隔离不变。详见 [自然上镜规格](requirements/p1-beauty.md)，FR-38 和 UX-46～UX-49 分别由矩阵与验收计划唯一定义。
+
 ## 5. 跨版本硬约束
 
 以下规则跨 P-1、P0 与已批准 P1 生效；某阶段未获准时，只保留规则，不因此进入交付范围。
@@ -210,7 +217,7 @@ P1 和明确不做项见[P1 创意层与决策边界](requirements/p1-creative.m
 - 快门只因相机不可用或正在捕获而暂时禁用；指导、分数、网络和阈值不得锁快门。P-1 意图、指导、捕获和保存必须在飞行模式工作。
 - 普通相机链路必须同时保留 Preview、ImageAnalysis、ImageCapture；分析只保留最新帧。唯一批准的四用例例外是用户显式开启的无声 P1 Live，失败后可见回退普通 JPEG；Extensions 不能以卸载分析为代价。
 - 快捷焦段只来自标准 CameraX/Camera2 实际能力与小米 14 Pro 真机标定；不得硬编码 2x、把数码裁切称作光学镜头、读取厂商传感器 ID，或把未验证焦段写成通过。
-- Face/Pose 只产生端侧构图与口令信号；禁止身份识别、embedding、人脸库、外貌评分和姿势分。两张脸以上不得进入单人姿势匹配。
+- Face/Pose 只产生端侧构图与口令信号，第 4.6 节另允许复用 Face 数值关键点作本地美颜；禁止身份识别、embedding、人脸库、外貌评分和姿势分。两张脸以上不得进入单人姿势匹配。
 - P-1 只申请 CAMERA，不新增登录、麦克风、定位、读取整本相册、后台上传或持续重试。
 - 已批准 P1 创意层不得改变 P-1 对照实验和 Go 指标。每次捕获使用不可复用 captureId；默认发布原片、私有保存配方，效果 JPEG 仅在明确另存或用户主动开启自动双保存时生成；分阶段恢复只重试失败阶段；无声 Motion Photo 是单一主文件，失败回退普通 JPEG且不得重复发布。
 - 已批准 P1 第二阶段姿势与摄影技巧继续服从一次一个主要动作、最多两个必做动作和随时快门；坐姿、走动、互动、肤色保护、复杂表情及 HyperOS Motion Photo 兼容性若缺少目标机证据，必须标为需校准或 NotRun，不能写成已承诺准确。
@@ -222,7 +229,7 @@ P1 和明确不做项见[P1 创意层与决策边界](requirements/p1-creative.m
 
 ### 10.1 产品与成片约束
 
-- 产品只指挥和叠线，不自研 ISP、RAW、LUT、美颜或生成替换。
+- 产品不自研 ISP、RAW、LUT 或生成替换；第 4.6 节独立批准的局部纹理平滑是美颜的唯一例外，P-1/P0 和既有全局风格仍无美颜。
 - 成片优先使用兼容的系统/厂商计算摄影；无法与实时分析共存时回退标准拍照。
 - 口令出现的动作必须能在取景器执行。
 - 自动快门 P-1 不存在；P0 即使实验也默认关闭，并设置最多三张、冷却和立即停止。
@@ -261,6 +268,7 @@ P1 和明确不做项见[P1 创意层与决策边界](requirements/p1-creative.m
 | --- | --- | --- |
 | [用户、交互、指导与场景规格](requirements/interaction-guidance-and-scenarios.md) | 用户角色、页面、取景器、状态、参数、语音/字幕、保存、指导引擎、场景与短口令 | 文内逐项标识 P-1/P0/P1；不得因同文件提前 |
 | [P1 创意层与决策边界](requirements/p1-creative.md) | P1 候选、单独批准的创意层、第二阶段强化、第一版非目标、决策变更规则 | 第 12.2 节及其第二阶段强化属于 ApprovedSeparate |
+| [自然上镜 v1](requirements/p1-beauty.md) | 独立美颜开关、保守局部纹理处理、回退与非破坏保存 | 第 4.6 节 ApprovedSeparate，不改变 P-1/P0 或十二风格语义 |
 | [后期范围](requirements/deferred-scope.md) | 合影、被拍者主用户与互拍方向 | 全部 Deferred；第一版不渲染入口 |
 | [分阶段验收](acceptance/acceptance-plan.md) | UX 唯一定义、目标机矩阵、质量门槛 | P-1 与已批准 P1 独立；P0 缺口显式 |
 | [需求追踪矩阵](traceability/requirements-matrix.md) | FR 唯一定义、Phase、UX、组件、自动化/真机证据和状态 | 分列 Scope/Delivery/Verification |

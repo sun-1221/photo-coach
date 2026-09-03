@@ -1,6 +1,7 @@
 package com.photocoach.app.creative
 
 import java.io.File
+import com.photocoach.app.beauty.BeautyPreset
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -10,7 +11,7 @@ import kotlinx.serialization.json.Json
 
 @Serializable
 data class EditRecipe(
-    val schemaVersion: Int = 1,
+    val schemaVersion: Int = 2,
     val captureId: String,
     val sequence: Int,
     val takenAtMillis: Long,
@@ -24,6 +25,8 @@ data class EditRecipe(
     val styleStrength: Float,
     val sourceIsMotionPhoto: Boolean,
     val derivativeColorSpace: String = "sRGB SDR",
+    val beautyPreset: String = BeautyPreset.OFF.name,
+    val beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
 ) {
     init {
         CaptureId(captureId)
@@ -38,6 +41,8 @@ data class EditRecipe(
             style: CreativeStyle,
             edit: EditAdjustment,
             sourceIsMotionPhoto: Boolean,
+            beautyPreset: BeautyPreset = BeautyPreset.OFF,
+            beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
         ): EditRecipe {
             val safe = edit.normalized()
             return EditRecipe(
@@ -53,6 +58,8 @@ data class EditRecipe(
                 fade = safe.fade,
                 styleStrength = safe.styleStrength,
                 sourceIsMotionPhoto = sourceIsMotionPhoto,
+                beautyPreset = beautyPreset.name,
+                beautyEngineVersion = beautyEngineVersion,
             )
         }
     }
