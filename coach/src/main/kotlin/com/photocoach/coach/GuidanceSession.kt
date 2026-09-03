@@ -23,6 +23,7 @@ sealed interface GuidanceStage {
         val optionalAvailable: Boolean,
         val retainedSubjectCue: Cue? = null,
         val qualityConfirmed: Boolean = false,
+        val readinessIssue: ReadinessIssue? = null,
     ) : GuidanceStage
     data class Optional(
         val cue: Cue,
@@ -82,6 +83,9 @@ class GuidanceSession(
     private var baselineSignals: Signals = Signals()
     private var latestSignals: Signals? = null
     private var latestSignalsAtMs: Long = 0L
+    private var readinessCandidate: ReadinessIssue? = null
+    private var readinessCandidateSinceMs: Long = 0L
+    private var readinessCandidateFrames: Int = 0
     private var stableSubjectCue: Cue? = null
     private var stableShooterCue: Cue? = null
     private var shooterCandidateTrackingStarted = false
@@ -410,9 +414,21 @@ class GuidanceSession(
         }
         val retained = current.retainedSubjectCue
         val keepRetained = retained != null && stableSubjectCue?.id == retained.id
+        val issue = currentReadinessIssue()
+        if (readinessCandidateFrames == 0 || issue != readinessCandidate) {
+            readinessCandidate = issue
+            readinessCandidateSinceMs = nowMs
+            readinessCandidateFrames = 1
+        } else {
+            readinessCandidateFrames += 1
+        }
+        val readinessStable = nowMs - readinessCandidateSinceMs >= CANDIDATE_STABLE_MS ||
+            readinessCandidateFrames >= CANDIDATE_STABLE_FRAMES
         val next = current.copy(
             optionalAvailable = !optionalUsed && optionalCandidates.any { directionAllowed(it, nowMs) },
             retainedSubjectCue = if (keepRetained) retained else null,
+            qualityConfirmed = if (readinessStable) issue == null else current.qualityConfirmed,
+            readinessIssue = if (readinessStable) issue else current.readinessIssue,
         )
         if (next != current) stage = next
     }
@@ -512,30 +528,41 @@ class GuidanceSession(
         stage = readyStage(retainedSubjectCue, minimumQualityConfirmed())
     }
 
-    private fun readyStage(retainedSubjectCue: Cue?, qualityConfirmed: Boolean): GuidanceStage.Ready =
-        GuidanceStage.Ready(
+    private fun readyStage(retainedSubjectCue: Cue?, qualityConfirmed: Boolean): GuidanceStage.Ready {
+        readinessCandidateFrames = 0
+        return GuidanceStage.Ready(
             optionalAvailable = !optionalUsed && optionalCandidates.any { directionAllowed(it, Long.MAX_VALUE) },
             retainedSubjectCue = retainedSubjectCue,
             qualityConfirmed = qualityConfirmed,
+            readinessIssue = if (qualityConfirmed) null else currentReadinessIssue(),
         )
+    }
 
-    private fun minimumQualityConfirmed(): Boolean {
-        val signals = latestSignals ?: return false
+    private fun minimumQualityConfirmed(): Boolean = currentReadinessIssue() == null
+
+    private fun currentReadinessIssue(): ReadinessIssue? {
+        val signals = latestSignals ?: return ReadinessIssue.NO_RECENT_SIGNAL
         val minimumFaceRatio = when (intent) {
             ShotIntent.CLOSE_UP -> CueSelector.CLOSE_UP_MIN_FACE_RATIO
             ShotIntent.PERSON_WITH_SCENERY -> CueSelector.SCENERY_MIN_FACE_RATIO
         }
-        return signals.faceCount == 1 &&
-            !signals.lensObscured &&
-            !signals.subjectCutOff &&
-            !signals.jointsNearFrameEdge &&
-            !signals.faceTooLowInFrame &&
-            !signals.faceTurnedAway &&
-            !signals.eyesLikelyClosed &&
-            signals.focusOnFace &&
-            signals.faceRatio >= minimumFaceRatio &&
-            abs(signals.tiltDegrees) <= CueSelector.TILT_THRESHOLD &&
-            signals.handheldStable
+        return when {
+            signals.lensObscured -> ReadinessIssue.LENS_OBSCURED
+            signals.faceCount == 0 -> ReadinessIssue.NO_FACE
+            signals.faceCount != 1 -> ReadinessIssue.MULTIPLE_PEOPLE
+            signals.subjectCutOff -> ReadinessIssue.SUBJECT_CUT_OFF
+            signals.jointsNearFrameEdge -> ReadinessIssue.JOINTS_NEAR_EDGE
+            signals.faceTooLowInFrame -> ReadinessIssue.FACE_TOO_LOW
+            signals.faceTurnedAway -> ReadinessIssue.FACE_TURNED_AWAY
+            signals.eyesLikelyClosed -> ReadinessIssue.EYES_CLOSED
+            !signals.focusOnFace -> ReadinessIssue.FOCUS_OFF_FACE
+            signals.faceDarkerThanScene -> ReadinessIssue.FACE_DARK
+            !signals.faceRatio.isFinite() || signals.faceRatio < minimumFaceRatio -> ReadinessIssue.SUBJECT_TOO_SMALL
+            !signals.tiltDegrees.isFinite() || abs(signals.tiltDegrees) > CueSelector.TILT_THRESHOLD -> ReadinessIssue.PHONE_TILTED
+            !signals.handheldStable -> ReadinessIssue.PHONE_MOVING
+            signals.subjectMotionHigh -> ReadinessIssue.SUBJECT_MOVING
+            else -> null
+        }
     }
 
     private fun beginObservation(nowMs: Long, unlockIntent: Boolean) {

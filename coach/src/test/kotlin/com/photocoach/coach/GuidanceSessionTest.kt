@@ -8,6 +8,69 @@ import org.junit.jupiter.api.Test
 
 class GuidanceSessionTest {
     @Test
+    fun knownDarkFaceOrSubjectMotionDoesNotClaimConfirmedReady() {
+        val good = Signals(faceCount = 1, faceRatio = 0.18f)
+        for ((signals, reason) in listOf(
+            good.copy(faceDarkerThanScene = true) to ReadinessIssue.FACE_DARK,
+            good.copy(subjectMotionHigh = true) to ReadinessIssue.SUBJECT_MOVING,
+        )) {
+            val session = readySession()
+            session.onCandidates(output(emptyList()), signals, 100)
+            session.tick(1_500)
+            val stage = session.snapshot().stage as GuidanceStage.Ready
+            assertFalse(stage.qualityConfirmed)
+            assertEquals(reason, stage.readinessIssue)
+            assertTrue(session.snapshot().shutterEnabled)
+        }
+    }
+
+    @Test
+    fun readyQualityRefreshesAfterStableImprovementAndDeterioration() {
+        val session = readySession()
+        val good = Signals(faceCount = 1, faceRatio = 0.18f)
+        session.onCandidates(output(emptyList()), good.copy(handheldStable = false), 100)
+        session.tick(1_500)
+        val first = assertInstanceOf(GuidanceStage.Ready::class.java, session.snapshot().stage)
+        assertFalse(first.qualityConfirmed)
+        assertEquals(ReadinessIssue.PHONE_MOVING, first.readinessIssue)
+        session.onCandidates(output(emptyList()), good, 1_600)
+        assertFalse((session.snapshot().stage as GuidanceStage.Ready).qualityConfirmed)
+        session.onCandidates(output(emptyList()), good, 1_900)
+        session.onCandidates(output(emptyList()), good, 2_200)
+        assertTrue((session.snapshot().stage as GuidanceStage.Ready).qualityConfirmed)
+        for (time in listOf(2_500L, 2_800L, 3_100L)) {
+            session.onCandidates(output(emptyList()), good.copy(focusOnFace = false), time)
+        }
+        val last = session.snapshot().stage as GuidanceStage.Ready
+        assertFalse(last.qualityConfirmed)
+        assertEquals(ReadinessIssue.FOCUS_OFF_FACE, last.readinessIssue)
+        assertTrue(session.snapshot().shutterEnabled)
+    }
+
+    @Test
+    fun exhaustedAdviceStillExplainsUnresolvedQualityWithoutAddingAStep() {
+        val session = readySession()
+        stabilize(session, output(listOf(moveCloser())), Signals(faceCount = 1, faceRatio = 0.04f))
+        session.tick(200 + GuidanceSession.SHOOTER_TIMEOUT_MS)
+        val stage = session.snapshot().stage as GuidanceStage.Ready
+        assertEquals(ReadinessIssue.SUBJECT_TOO_SMALL, stage.readinessIssue)
+        assertFalse(stage.optionalAvailable)
+        assertFalse(stage.qualityConfirmed)
+        assertTrue(session.snapshot().shutterEnabled)
+    }
+
+    @Test
+    fun oneGoodFrameDoesNotEraseTheReadinessReason() {
+        val session = readySession()
+        val bad = Signals(faceCount = 1, faceRatio = 0.18f, handheldStable = false)
+        session.onCandidates(output(emptyList()), bad, 100)
+        session.tick(1_500)
+        session.onCandidates(output(emptyList()), bad.copy(handheldStable = true), 1_600)
+        session.onCandidates(output(emptyList()), bad, 1_900)
+        assertEquals(ReadinessIssue.PHONE_MOVING, (session.snapshot().stage as GuidanceStage.Ready).readinessIssue)
+    }
+
+    @Test
     fun threeStableFramesStartOneOfTwoAndSkippingNeverAddsRequiredSteps() {
         val session = readySession()
         val output = output(listOf(moveCloser(priority = 100), focusFace(priority = 80), subjectCue()))
