@@ -12,6 +12,7 @@ import android.provider.Settings
 import android.view.KeyEvent
 import androidx.core.view.doOnLayout
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,6 +46,7 @@ import com.photocoach.app.tts.GuidanceTts
 import com.photocoach.app.ui.consent.CameraConsentScreen
 import com.photocoach.app.ui.theme.PhotoCoachTheme
 import com.photocoach.app.ui.viewfinder.PermissionDeniedScreen
+import com.photocoach.app.ui.viewfinder.ViewfinderActions
 import com.photocoach.app.ui.viewfinder.ViewfinderScreen
 import com.photocoach.coach.GuidanceStage
 import kotlinx.coroutines.Job
@@ -60,6 +62,7 @@ class MainActivity : ComponentActivity() {
     private var previewView: PreviewView? = null
     private var cameraConsented by mutableStateOf(false)
     private var permissionState by mutableStateOf(PermissionState.UNKNOWN)
+    private var permissionRequestInFlight = false
     private var countdownJob: Job? = null
     private val captureRequestGate = CaptureRequestGate()
     private var rebindJob: Job? = null
@@ -70,13 +73,17 @@ class MainActivity : ComponentActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        permissionState = if (granted) PermissionState.GRANTED else PermissionState.DENIED
+        permissionRequestInFlight = false
+        permissionState = if (granted) PermissionState.GRANTED else deniedPermissionState()
         if (granted) prepareAndRebind()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         camera = CameraBinder(this)
         thermalMonitor = ThermalStateMonitor(this) { level ->
             camera.updateThermalLevel(level)
@@ -90,7 +97,7 @@ class MainActivity : ComponentActivity() {
         }.also { it.start() }
         tts = GuidanceTts(this)
         cameraConsented = prefs().getBoolean(PREF_CAMERA_CONSENT, false)
-        if (cameraConsented) requestCameraPermission()
+        if (cameraConsented) restoreCameraPermissionState()
 
         setContent {
             PhotoCoachTheme {
@@ -156,89 +163,91 @@ class MainActivity : ComponentActivity() {
                     permissionState == PermissionState.UNKNOWN -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("正在等待相机权限")
                     }
-                    permissionState == PermissionState.DENIED -> PermissionDeniedScreen(
+                    permissionState == PermissionState.DENIED_CAN_ASK ||
+                        permissionState == PermissionState.DENIED_SETTINGS -> PermissionDeniedScreen(
+                        canRequestAgain = permissionState == PermissionState.DENIED_CAN_ASK,
                         onRetry = ::requestCameraPermission,
                         onSettings = ::openAppSettings,
                     )
                     else -> ViewfinderScreen(
                         ui = ui,
                         tiltDegrees = viewModel.tiltDegrees,
-                        onPreviewReady = ::bindPreview,
-                        onTapFocus = { x, y, lock ->
-                            viewModel.onFocusStarted(x, y, lock)
-                            camera.tapToFocus(x, y, lock, viewModel::onFocusResult)
-                        },
-                        onEv = {
-                            viewModel.applyUserEv(it)
-                            viewModel.onExposureApplied(camera.setExposure(viewModel.currentEv()))
-                        },
-                        onSetFocal = ::setUserFocal,
-                        onZoomBy = { zoomBy(it) },
-                        onVoiceEnabledChange = { enabled ->
-                            viewModel.setVoiceEnabled(enabled)
-                        },
-                        onSubjectCaptionsEnabledChange = { enabled ->
-                            viewModel.setSubjectCaptionsEnabled(enabled)
-                        },
-                        onGridEnabledChange = viewModel::setGridEnabled,
-                        onLevelEnabledChange = viewModel::setLevelEnabled,
-                        onTimerChange = viewModel::setCaptureTimer,
-                        onAspectRatioChange = viewModel::setAspectRatio,
-                        onCapturePriorityChange = viewModel::setCapturePriority,
-                        onModePreferenceChange = viewModel::setModePreference,
-                        onResetSettings = {
-                            cancelScheduledCapture()
-                            viewModel.resetCameraSettings()
-                        },
-                        onUnlockFocus = {
-                            camera.unlockAeAf()
-                            viewModel.onFocusUnlocked()
-                        },
-                        onToggleFlash = viewModel::toggleFlash,
-                        onSelectIntent = viewModel::selectIntent,
-                        onSkip = viewModel::skip,
-                        onOptional = viewModel::requestOptional,
-                        onCapture = ::capture,
-                        onOpenRecentPhoto = ::openRecentPhoto,
-                        onRetrySave = ::retrySave,
-                        onDiscardSave = {
-                            camera.discardPending()
-                            viewModel.abandonSaveFailure()
-                        },
-                        onRetryCamera = ::prepareAndRebind,
-                        onOpenSettings = ::openAppSettings,
-                        onExit = { finish() },
-                        onHideFocusControls = viewModel::hideFocusControls,
-                        onDismissControlMessage = viewModel::dismissControlMessage,
-                        onCreativeStyleChange = viewModel::setCreativeStyle,
-                        onCreativeStyleStrengthChange = viewModel::setCreativeStyleStrength,
-                        onToggleCurrentStyleFavorite = viewModel::toggleCurrentStyleFavorite,
-                        onPoseCategoryChange = viewModel::selectPoseCategory,
-                        onP1TechniquesEnabledChange = viewModel::setP1TechniquesEnabled,
-                        onThreeShotBurstChange = viewModel::setThreeShotBurstEnabled,
-                        onSaveStrategyChange = viewModel::setSaveStrategy,
-                        onDerivativeQualityChange = viewModel::setDerivativeQuality,
-                        onLivePhotoChange = viewModel::setLivePhotoEnabled,
-                        onBeautyPresetChange = viewModel::setBeautyPreset,
-                        onApplyParameterSuggestion = ::applyParameterSuggestion,
-                        onOpenCreativeResult = viewModel::openCreativeResult,
-                        onSelectCreativePhoto = viewModel::selectCreativePhoto,
-                        onCreativeEdit = viewModel::updateCreativeEdit,
-                        onUndoCreativeEdit = viewModel::undoCreativeEdit,
-                        onRedoCreativeEdit = viewModel::redoCreativeEdit,
-                        onResetCreativeEdit = viewModel::resetCreativeEdit,
-                        onCompareOriginal = viewModel::setCompareOriginal,
-                        onSaveCreativeCopy = ::saveCreativeCopy,
-                        onOpenPhoto = ::openRecentPhoto,
-                        onSharePhoto = ::sharePhoto,
-                        onFavoritePhoto = ::favoritePhoto,
-                        onTrashPhoto = ::trashPhoto,
-                        onDismissCreativeResult = ::dismissCreativeResult,
+                        actions = viewfinderActions(),
                     )
                 }
             }
         }
     }
+
+    private fun viewfinderActions() = ViewfinderActions(
+        onPreviewReady = ::bindPreview,
+        onTapFocus = { x, y, lock ->
+            viewModel.onFocusStarted(x, y, lock)
+            camera.tapToFocus(x, y, lock, viewModel::onFocusResult)
+        },
+        onEv = {
+            viewModel.applyUserEv(it)
+            viewModel.onExposureApplied(camera.setExposure(viewModel.currentEv()))
+        },
+        onSetFocal = ::setUserFocal,
+        onZoomBy = { zoomBy(it) },
+        onVoiceEnabledChange = viewModel::setVoiceEnabled,
+        onSubjectCaptionsEnabledChange = viewModel::setSubjectCaptionsEnabled,
+        onGridEnabledChange = viewModel::setGridEnabled,
+        onLevelEnabledChange = viewModel::setLevelEnabled,
+        onTimerChange = viewModel::setCaptureTimer,
+        onAspectRatioChange = viewModel::setAspectRatio,
+        onCapturePriorityChange = viewModel::setCapturePriority,
+        onModePreferenceChange = viewModel::setModePreference,
+        onResetSettings = {
+            cancelScheduledCapture()
+            viewModel.resetCameraSettings()
+        },
+        onUnlockFocus = {
+            camera.unlockAeAf()
+            viewModel.onFocusUnlocked()
+        },
+        onToggleFlash = viewModel::toggleFlash,
+        onSelectIntent = viewModel::selectIntent,
+        onSkip = viewModel::skip,
+        onOptional = viewModel::requestOptional,
+        onCapture = ::capture,
+        onOpenRecentPhoto = ::openRecentPhoto,
+        onRetrySave = ::retrySave,
+        onDiscardSave = {
+            camera.discardPending()
+            viewModel.abandonSaveFailure()
+        },
+        onRetryCamera = ::prepareAndRebind,
+        onOpenSettings = ::openAppSettings,
+        onExit = { finish() },
+        onHideFocusControls = viewModel::hideFocusControls,
+        onDismissControlMessage = viewModel::dismissControlMessage,
+        onCreativeStyleChange = viewModel::setCreativeStyle,
+        onCreativeStyleStrengthChange = viewModel::setCreativeStyleStrength,
+        onToggleCurrentStyleFavorite = viewModel::toggleCurrentStyleFavorite,
+        onPoseCategoryChange = viewModel::selectPoseCategory,
+        onP1TechniquesEnabledChange = viewModel::setP1TechniquesEnabled,
+        onThreeShotBurstChange = viewModel::setThreeShotBurstEnabled,
+        onSaveStrategyChange = viewModel::setSaveStrategy,
+        onDerivativeQualityChange = viewModel::setDerivativeQuality,
+        onLivePhotoChange = viewModel::setLivePhotoEnabled,
+        onBeautyPresetChange = viewModel::setBeautyPreset,
+        onApplyParameterSuggestion = ::applyParameterSuggestion,
+        onOpenCreativeResult = viewModel::openCreativeResult,
+        onSelectCreativePhoto = viewModel::selectCreativePhoto,
+        onCreativeEdit = viewModel::updateCreativeEdit,
+        onUndoCreativeEdit = viewModel::undoCreativeEdit,
+        onRedoCreativeEdit = viewModel::redoCreativeEdit,
+        onResetCreativeEdit = viewModel::resetCreativeEdit,
+        onCompareOriginal = viewModel::setCompareOriginal,
+        onSaveCreativeCopy = ::saveCreativeCopy,
+        onOpenPhoto = ::openRecentPhoto,
+        onSharePhoto = ::sharePhoto,
+        onFavoritePhoto = ::favoritePhoto,
+        onTrashPhoto = ::trashPhoto,
+        onDismissCreativeResult = ::dismissCreativeResult,
+    )
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
@@ -255,8 +264,8 @@ class MainActivity : ComponentActivity() {
         if (granted) {
             permissionState = PermissionState.GRANTED
             prepareAndRebind()
-        } else if (permissionState == PermissionState.GRANTED) {
-            permissionState = PermissionState.DENIED
+        } else if (!permissionRequestInFlight && permissionState == PermissionState.GRANTED) {
+            permissionState = deniedPermissionState()
             viewModel.markCameraError(getString(R.string.permission_denied_title))
         }
     }
@@ -270,14 +279,34 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    private fun restoreCameraPermissionState() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            permissionState = PermissionState.GRANTED
+            prepareAndRebind()
+        } else if (prefs().getBoolean(PREF_CAMERA_PERMISSION_REQUESTED, false)) {
+            permissionState = deniedPermissionState()
+        } else {
+            requestCameraPermission()
+        }
+    }
+
     private fun requestCameraPermission() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             permissionState = PermissionState.GRANTED
             prepareAndRebind()
         } else {
+            permissionRequestInFlight = true
+            prefs().edit { putBoolean(PREF_CAMERA_PERMISSION_REQUESTED, true) }
             permissionLauncher.launch(Manifest.permission.CAMERA)
         }
     }
+
+    private fun deniedPermissionState(): PermissionState =
+        if (shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)) {
+            PermissionState.DENIED_CAN_ASK
+        } else {
+            PermissionState.DENIED_SETTINGS
+        }
 
     private fun bindPreview(view: PreviewView) {
         previewView = view
@@ -576,7 +605,8 @@ class MainActivity : ComponentActivity() {
     private fun prefs() = getSharedPreferences(PREFS, MODE_PRIVATE)
 }
 
-private enum class PermissionState { UNKNOWN, GRANTED, DENIED }
+private enum class PermissionState { UNKNOWN, GRANTED, DENIED_CAN_ASK, DENIED_SETTINGS }
 
 private const val PREFS = "photo_coach"
 private const val PREF_CAMERA_CONSENT = "camera_consent"
+private const val PREF_CAMERA_PERMISSION_REQUESTED = "camera_permission_requested"

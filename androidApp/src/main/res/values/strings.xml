@@ -8,7 +8,8 @@
     <string name="consent_denied_hint">未同意则无法进入取景器。</string>
     <string name="permission_denied_title">需要相机权限</string>
     <string name="permission_denied_body">没有相机权限就无法取景。本应用只申请相机，不会读取整本相册、定位或麦克风。</string>
-    <string name="permission_retry">再试一次</string>
-    <string name="permission_settings">去系统设置</string>
+    <string name="permission_denied_settings_body">相机权限已被系统停用。请在应用设置中允许相机权限，返回后会自动继续。</string>
+    <string name="permission_retry">重新授权</string>
+    <string name="permission_settings">打开设置</string>
     <string name="camera_busy">相机被占用或打不开，请重试或前往系统设置</string>
 </resources>

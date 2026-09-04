@@ -2,10 +2,14 @@ package com.photocoach.app.ui.viewfinder
 
 import android.app.Application
 import android.os.SystemClock
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -21,7 +25,12 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.CompositionLocalProvider
 import com.photocoach.app.AppViewModel
 import com.photocoach.app.beauty.BeautyPreset
 import com.photocoach.app.ViewfinderUi
@@ -203,6 +212,51 @@ class ViewfinderScreenTest {
             "EV slider $evBounds overlapped operation panel $panelBounds",
             evBounds.bottom <= panelBounds.top,
         )
+    }
+
+    @Test
+    fun shutterIsCenteredAndControlsHaveAccessibleLabels() {
+        render(ui(GuidanceStage.Ready(optionalAvailable = false)).copy(
+            focalPresets = listOf(defaultFocal), selectedFocalId = defaultFocal.cameraId,
+        ))
+        val panel = compose.onNodeWithTag("operation_panel").getBoundsInRoot()
+        val shutter = compose.onNodeWithTag("shutter").getBoundsInRoot()
+        val centerDifference = (panel.left + panel.right - shutter.left - shutter.right).value / 2f
+        assertTrue("shutter is not centered", kotlin.math.abs(centerDifference) < 1f)
+        compose.onNodeWithContentDescription("拍照快门").assertIsDisplayed().assertIsEnabled()
+        compose.onNodeWithContentDescription("退出相机").assertIsDisplayed()
+        compose.onNodeWithContentDescription("闪光关闭，点按切换").assertIsDisplayed()
+        compose.onNodeWithTag("intent_close_up").assertIsSelected()
+        listOf("exit", "prompt_settings", "camera_settings_menu", "flash").zipWithNext().forEach { (left, right) ->
+            val leftBounds = compose.onNodeWithTag(left).getBoundsInRoot()
+            val rightBounds = compose.onNodeWithTag(right).getBoundsInRoot()
+            assertTrue("toolbar controls overlap", leftBounds.right <= rightBounds.left)
+        }
+    }
+
+    @Test
+    fun previewWarningAndExposureStayAboveTheDock() {
+        render(ui(GuidanceStage.Ready(optionalAvailable = false)).copy(
+            beautyPreviewWarning = "美颜不可用，普通预览继续",
+            showEv = true,
+            exposureCapability = ExposureCapability(-1f, 1f, 0.1f),
+        ))
+        val warning = compose.onNodeWithTag("preview_effect_error").assertIsDisplayed().getBoundsInRoot()
+        val ev = compose.onNodeWithTag("ev_slider").getBoundsInRoot()
+        val panel = compose.onNodeWithTag("operation_panel").getBoundsInRoot()
+        assertTrue("warning overlaps exposure", warning.bottom <= ev.top)
+        assertTrue("exposure overlaps dock", ev.bottom <= panel.top)
+    }
+
+    @Test
+    fun largeTextKeepsGuidanceSkipAndShutterInsideScreen() {
+        render(ui(GuidanceStage.Action(RequiredStep.SHOOTER, shooterCue, 0L)), fontScale = 2f)
+        val root = compose.onRoot().getBoundsInRoot()
+        val guidance = compose.onNodeWithTag("guidance_text").assertIsDisplayed().getBoundsInRoot()
+        val shutter = compose.onNodeWithTag("shutter").assertIsDisplayed().assertIsEnabled().getBoundsInRoot()
+        compose.onNodeWithTag("skip").assertIsDisplayed()
+        assertTrue("guidance overlaps shutter", guidance.bottom <= shutter.top)
+        assertTrue("shutter clipped at screen bottom", shutter.bottom <= root.bottom)
     }
 
     @Test
@@ -472,6 +526,37 @@ class ViewfinderScreenTest {
     }
 
     @Test
+    fun compactLandscapeUsesAdaptiveRailAndKeepsGuidanceSkipAndShutterReachable() {
+        render(
+            ui(GuidanceStage.Action(RequiredStep.SHOOTER, shooterCue, 0L)),
+            windowSize = DpSize(400.dp, 300.dp),
+        )
+
+        val root = compose.onRoot().getBoundsInRoot()
+        val panel = compose.onNodeWithTag("operation_panel").assertIsDisplayed().getBoundsInRoot()
+        val camera = compose.onNodeWithTag("camera_surface").assertIsDisplayed().getBoundsInRoot()
+        val panelWidth = panel.right - panel.left
+        val previewWidth = camera.right - camera.left
+
+        assertTrue("adaptive rail stayed at the old fixed 320dp width: $panelWidth", panelWidth < 320.dp)
+        assertTrue("preview became too narrow: $previewWidth", previewWidth >= 140.dp)
+        assertTrue("720dp policy should be narrower than the old fixed rail", adaptiveLandscapePanelWidth(720.dp) < 320.dp)
+        assertTrue("landscape rail escaped the test window", panel.bottom <= root.bottom)
+        compose.onNodeWithTag("guidance_text").assertIsDisplayed()
+        compose.onNodeWithTag("skip").assertIsDisplayed()
+        compose.onNodeWithTag("shutter").assertIsDisplayed().assertIsEnabled()
+    }
+
+    @Test
+    fun cameraErrorKeepsBothRecoveryActionsVisible() {
+        render(ui(GuidanceStage.Ready(optionalAvailable = false)).copy(cameraError = "相机暂时不可用"))
+
+        compose.onNodeWithText("相机暂时不可用").assertIsDisplayed()
+        compose.onNodeWithTag("camera_retry").assertIsDisplayed()
+        compose.onNodeWithTag("camera_settings").assertIsDisplayed()
+    }
+
+    @Test
     fun neutralReadyShowsTheCurrentActionWithoutRequiringAnotherStep() {
         render(ui(GuidanceStage.Ready(optionalAvailable = false, qualityConfirmed = false,
             readinessIssue = com.photocoach.coach.ReadinessIssue.SUBJECT_TOO_SMALL)))
@@ -495,48 +580,59 @@ class ViewfinderScreenTest {
         onBeautyPresetChange: (BeautyPreset) -> Unit = {},
         onLivePhotoChange: (Boolean) -> Unit = {},
         onModePreferenceChange: (CameraModePreference) -> Unit = {},
+        fontScale: Float? = null,
+        windowSize: DpSize? = null,
     ) {
         compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale ?: density.fontScale)) {
             PhotoCoachTheme {
+                Box(
+                    modifier = windowSize?.let { Modifier.requiredSize(it.width, it.height) } ?: Modifier,
+                ) {
                 ViewfinderScreen(
                     ui = state,
                     tiltDegrees = 0f,
-                    onPreviewReady = {},
-                    onTapFocus = { _, _, _ -> },
-                    onEv = {},
-                    onSetFocal = {},
-                    onZoomBy = onZoomBy,
-                    onVoiceEnabledChange = onVoiceEnabledChange,
-                    onSubjectCaptionsEnabledChange = onSubjectCaptionsEnabledChange,
-                    onGridEnabledChange = {},
-                    onLevelEnabledChange = {},
-                    onTimerChange = {},
-                    onAspectRatioChange = {},
-                    onCapturePriorityChange = {},
-                    onModePreferenceChange = onModePreferenceChange,
-                    onResetSettings = {},
-                    onUnlockFocus = {},
-                    onToggleFlash = {},
-                    onSelectIntent = onIntent,
-                    onSkip = {},
-                    onOptional = {},
-                    onCapture = {},
-                    onOpenRecentPhoto = onOpenRecentPhoto,
-                    onRetrySave = {},
-                    onDiscardSave = {},
-                    onRetryCamera = {},
-                    onOpenSettings = {},
-                    onExit = {},
-                    onHideFocusControls = {},
-                    onDismissControlMessage = {},
-                    onCreativeStyleChange = onCreativeStyleChange,
-                    onThreeShotBurstChange = onThreeShotBurstChange,
-                    onOpenCreativeResult = onOpenCreativeResult,
-                    onSelectCreativePhoto = onSelectCreativePhoto,
-                    onSaveCreativeCopy = onSaveCreativeCopy,
-                    onBeautyPresetChange = onBeautyPresetChange,
-                    onLivePhotoChange = onLivePhotoChange,
+                    actions = ViewfinderActions(
+                        onPreviewReady = {},
+                        onTapFocus = { _, _, _ -> },
+                        onEv = {},
+                        onSetFocal = {},
+                        onZoomBy = onZoomBy,
+                        onVoiceEnabledChange = onVoiceEnabledChange,
+                        onSubjectCaptionsEnabledChange = onSubjectCaptionsEnabledChange,
+                        onGridEnabledChange = {},
+                        onLevelEnabledChange = {},
+                        onTimerChange = {},
+                        onAspectRatioChange = {},
+                        onCapturePriorityChange = {},
+                        onModePreferenceChange = onModePreferenceChange,
+                        onResetSettings = {},
+                        onUnlockFocus = {},
+                        onToggleFlash = {},
+                        onSelectIntent = onIntent,
+                        onSkip = {},
+                        onOptional = {},
+                        onCapture = {},
+                        onOpenRecentPhoto = onOpenRecentPhoto,
+                        onRetrySave = {},
+                        onDiscardSave = {},
+                        onRetryCamera = {},
+                        onOpenSettings = {},
+                        onExit = {},
+                        onHideFocusControls = {},
+                        onDismissControlMessage = {},
+                        onCreativeStyleChange = onCreativeStyleChange,
+                        onThreeShotBurstChange = onThreeShotBurstChange,
+                        onOpenCreativeResult = onOpenCreativeResult,
+                        onSelectCreativePhoto = onSelectCreativePhoto,
+                        onSaveCreativeCopy = onSaveCreativeCopy,
+                        onBeautyPresetChange = onBeautyPresetChange,
+                        onLivePhotoChange = onLivePhotoChange,
+                    ),
                 )
+                }
+            }
             }
         }
     }

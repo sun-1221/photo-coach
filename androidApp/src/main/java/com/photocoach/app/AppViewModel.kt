@@ -38,15 +38,11 @@ import com.photocoach.app.camera.CapturedPhoto
 import com.photocoach.app.camera.CaptureSpec
 import com.photocoach.app.camera.PartialSaveException
 import com.photocoach.app.camera.ExportedCopy
-import com.photocoach.app.creative.BurstPhoto
 import com.photocoach.app.creative.BurstSession
-import com.photocoach.app.creative.BurstState
 import com.photocoach.app.creative.CreativeStyle
 import com.photocoach.app.creative.EditAdjustment
-import com.photocoach.app.creative.EditHistory
 import com.photocoach.app.creative.EditRecipe
 import com.photocoach.app.creative.CaptureId
-import com.photocoach.app.creative.CaptureIdentity
 import com.photocoach.app.creative.ParameterCoach
 import com.photocoach.app.creative.ParameterContext
 import com.photocoach.app.creative.ParameterSuggestion
@@ -92,122 +88,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-enum class FocusStatus { FOCUSING, SUCCESS, FAILED }
-
-data class FocusIndicator(
-    val x: Float,
-    val y: Float,
-    val status: FocusStatus,
-    val lockRequested: Boolean,
-    val generation: Int,
-)
-
-data class SceneApplyRequest(
-    val mode: SuggestedMode,
-    val preferTelephoto: Boolean?,
-    val evStops: Float?,
-    val generation: Int,
-)
-
-data class CreativePhotoUi(
-    val id: String,
-    val captureId: String = "unknowncapture",
-    val originalUri: String,
-    val displayUri: String,
-    val score: PhotoQualityScore,
-    val sequence: Int,
-    val effectWasDownsampled: Boolean,
-    val warning: String? = null,
-    val isMotionPhoto: Boolean = false,
-    val beautyPreset: BeautyPreset = BeautyPreset.OFF,
-    val beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
-)
-
-data class CreativeResultUi(
-    val photos: List<CreativePhotoUi>,
-    val recommendedId: String,
-    val selectedId: String,
-    val recommendationReason: String,
-    val isBurst: Boolean,
-    val edit: EditAdjustment = EditAdjustment(),
-    val canUndo: Boolean = false,
-    val canRedo: Boolean = false,
-    val canReset: Boolean = false,
-    val compareOriginal: Boolean = false,
-    val exportInProgress: Boolean = false,
-    val message: String? = null,
-) {
-    val selectedPhoto: CreativePhotoUi get() = photos.first { it.id == selectedId }
-}
-
-data class CreativeExportRequest(
-    val source: Uri,
-    val edit: EditAdjustment,
-    val captureId: CaptureId,
-    val sequence: Int,
-    val takenAtMillis: Long,
-    val beautyPreset: BeautyPreset = BeautyPreset.OFF,
-    val beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
-)
-
-data class ViewfinderUi(
-    val guidance: GuidanceSnapshot,
-    val coach: CoachOutput? = null,
-    val overlay: OverlayGeometry? = null,
-    val evStops: Float = 0f,
-    val focalPresets: List<QuickFocalPreset> = emptyList(),
-    val selectedFocalId: String? = null,
-    val exposureCapability: ExposureCapability = ExposureCapability(),
-    val zoomCapability: ZoomCapability = ZoomCapability(),
-    val availableModes: Set<SuggestedMode> = setOf(SuggestedMode.PHOTO),
-    val activeMode: SuggestedMode = SuggestedMode.PHOTO,
-    val flashSetting: FlashSetting = FlashSetting.OFF,
-    val voiceEnabled: Boolean = true,
-    val subjectCaptionsEnabled: Boolean = true,
-    val gridEnabled: Boolean = true,
-    val levelEnabled: Boolean = true,
-    val captureTimer: CaptureTimer = CaptureTimer.OFF,
-    val aspectRatio: CaptureAspectRatio = CaptureAspectRatio.FOUR_THREE,
-    val capturePriority: CapturePriority = CapturePriority.FOCUS,
-    val modePreference: CameraModePreference = CameraModePreference.AUTO,
-    val ttsFailed: Boolean = false,
-    val focusIndicator: FocusIndicator? = null,
-    val aeAfLocked: Boolean = false,
-    val showEv: Boolean = false,
-    val countdownSeconds: Int? = null,
-    val recentPhoto: String? = null,
-    val cameraError: String? = null,
-    val lensWarning: String? = null,
-    val controlMessage: String? = null,
-    val sceneApply: SceneApplyRequest? = null,
-    val shutterPulse: Int = 0,
-    val creativeStyle: CreativeStyle = CreativeStyle.ORIGINAL,
-    val creativeStyleStrength: Float = 0f,
-    val styleDiscovery: StyleDiscovery = StyleDiscovery(CreativeStyle.entries, emptyList()),
-    val styleFavorites: Set<CreativeStyle> = emptySet(),
-    val styleRecent: List<CreativeStyle> = emptyList(),
-    val threeShotBurstEnabled: Boolean = false,
-    val saveStrategy: SaveStrategy = SaveStrategy.ORIGINAL_WITH_RECIPE,
-    val derivativeQuality: DerivativeQuality = DerivativeQuality.FULL,
-    val livePhotoEnabled: Boolean = false,
-    val beautyPreset: BeautyPreset = BeautyPreset.OFF,
-    val beautyPreviewWarning: String? = null,
-    val beautyPreviewState: BeautyPreviewState = BeautyPreviewState.WAITING_FACE,
-    val livePhotoAvailable: Boolean = false,
-    val liveFallbackReason: String? = null,
-    val saveStatusText: String? = null,
-    val savePartialSuccess: Boolean = false,
-    val burstProgress: Int? = null,
-    val parameterSuggestions: List<ParameterSuggestion> = emptyList(),
-    val creativeResult: CreativeResultUi? = null,
-    val creativeResultVisible: Boolean = false,
-    val thermalLevel: ThermalLevel = ThermalLevel.UNKNOWN,
-    val thermalMessage: String? = null,
-    val selectedPoseCategory: PoseCategory? = null,
-    val poseCueText: String? = null,
-    val p1TechniquesEnabled: Boolean = false,
-)
-
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val engine = CoachEngine.loadDefault()
     private val guidance = GuidanceSession()
@@ -229,17 +109,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var controlQuietUntilMs = 0L
     private val faceFocusSignal = FaceFocusSignalState()
     private var lastLoggedStage = ""
-    private val burstSession = BurstSession()
+    private val creativeCapture = CreativeCaptureSession()
     private val poseGuidance = PoseGuidanceReducer()
-    private var captureExpectedCount = 1
-    private var captureStyle = CreativeStyle.ORIGINAL
-    private var activeCaptureId: CaptureId? = null
-    private var captureTakenAtMillis: Long = 0L
-    private var captureLiveRequested = false
-    private var captureSettings = CameraUserSettings.DEFAULT
-    private var captureEdit = EditAdjustment()
-    private val capturedPhotos = mutableListOf<CreativePhotoUi>()
-    private var editHistory = EditHistory()
     private val analyzedFrames = MutableSharedFlow<AnalyzedFrame>(
         replay = 1,
         extraBufferCapacity = 0,
@@ -904,24 +775,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val accepted = guidance.onShutter(now())
         if (accepted) {
             val thermalPolicy = ThermalPolicy.forLevel(_ui.value.thermalLevel)
-            captureExpectedCount = if (_ui.value.threeShotBurstEnabled && thermalPolicy.allowNewBurst) BurstSession.SHOT_COUNT else 1
-            captureStyle = _ui.value.creativeStyle
-            captureSettings = cameraSettings()
-            captureEdit = EditAdjustment(styleStrength = _ui.value.creativeStyleStrength)
-            activeCaptureId = CaptureIdentity.create()
-            captureTakenAtMillis = System.currentTimeMillis()
-            captureLiveRequested = _ui.value.livePhotoEnabled && thermalPolicy.allowNewLive
-            capturedPhotos.clear()
-            editHistory = EditHistory()
-            burstSession.reset()
-            if (captureExpectedCount == BurstSession.SHOT_COUNT) {
-                check(burstSession.start(userEnabledThreeShot = true))
-            }
+            creativeCapture.begin(
+                expectedCount = if (_ui.value.threeShotBurstEnabled && thermalPolicy.allowNewBurst) BurstSession.SHOT_COUNT else 1,
+                style = _ui.value.creativeStyle,
+                settings = cameraSettings(),
+                styleStrength = _ui.value.creativeStyleStrength,
+                liveRequested = _ui.value.livePhotoEnabled && thermalPolicy.allowNewLive,
+            )
             _ui.update {
                 it.copy(
                     guidance = guidance.snapshot(),
                     shutterPulse = it.shutterPulse + 1,
-                    burstProgress = if (captureExpectedCount == BurstSession.SHOT_COUNT) 0 else null,
+                    burstProgress = if (creativeCapture.isBurst) 0 else null,
                     creativeResult = null,
                     creativeResultVisible = false,
                     saveStatusText = "正在捕获原片",
@@ -933,10 +798,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         return accepted
     }
 
-    fun activeCaptureStyle(): CreativeStyle = captureStyle
+    fun activeCaptureStyle(): CreativeStyle = creativeCapture.style
 
     fun activeCaptureSpec(): CaptureSpec? {
-        val captureId = activeCaptureId ?: return null
         val state = _ui.value
         val overlay = state.overlay
         val face = overlay?.faceRects?.singleOrNull()
@@ -951,61 +815,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 (face.bottom / overlay.canvasHeight).coerceIn(0f, 1f),
             )
         }.getOrNull() else null
-        return CaptureSpec(
-            captureId = captureId,
-            sequence = capturedPhotos.size + 1,
-            takenAtMillis = captureTakenAtMillis,
-            style = captureStyle,
-            edit = captureEdit,
-            saveStrategy = captureSettings.saveStrategy,
-            derivativeQuality = captureSettings.derivativeQuality,
-            livePhotoRequested = captureLiveRequested,
-            portraitRegion = portraitRegion,
-            beautyPreset = captureSettings.beautyPreset,
-        )
+        return creativeCapture.nextCaptureSpec(portraitRegion)
     }
 
     /** Returns true when the Activity should submit the next shot in the same explicit batch. */
     fun onPhotoCaptured(photo: CapturedPhoto): Boolean {
         if (
             _ui.value.guidance.stage !is GuidanceStage.Capturing ||
-            capturedPhotos.size >= captureExpectedCount
+            creativeCapture.isComplete
         ) {
             return false
         }
-        val sequence = capturedPhotos.size + 1
-        val item = CreativePhotoUi(
-            id = photo.originalUri.toString(),
-            captureId = photo.captureId.value,
-            originalUri = photo.originalUri.toString(),
-            displayUri = photo.displayUri.toString(),
-            score = photo.score,
-            sequence = sequence,
-            effectWasDownsampled = photo.effectWasDownsampled,
-            warning = photo.warning,
-            isMotionPhoto = photo.isMotionPhoto,
-            beautyPreset = photo.beautyPreset,
-            beautyEngineVersion = photo.beautyEngineVersion,
-        )
-        capturedPhotos += item
-        if (captureExpectedCount == BurstSession.SHOT_COUNT) {
-            burstSession.record(BurstPhoto(item.id, item.score, sequence))
-        }
+        val item = creativeCapture.record(photo)
         photo.warning?.let(::showControlMessage)
-        if (capturedPhotos.size < captureExpectedCount) {
-            _ui.update { it.copy(burstProgress = capturedPhotos.size) }
+        if (creativeCapture.hasMoreShots) {
+            _ui.update { it.copy(burstProgress = creativeCapture.capturedCount) }
             return true
         }
-        val recommendedId = when (val state = burstSession.state) {
-            is BurstState.Complete -> state.recommendedId
-            else -> item.id
-        }
-        val recommended = capturedPhotos.first { it.id == recommendedId }
-        val runnerUp = capturedPhotos
+        val photos = creativeCapture.photos
+        val recommendedId = creativeCapture.recommendedId(item.id)
+        val recommended = photos.first { it.id == recommendedId }
+        val runnerUp = photos
             .filterNot { it.id == recommendedId }
             .maxByOrNull { it.score.total }
         val reason = recommended.score.reasonComparedWith(runnerUp?.score)
-        val liveRequested = captureLiveRequested
+        val liveRequested = creativeCapture.requestedLivePhoto
         val saveOutcomeText = when {
             recommended.isMotionPhoto -> "Live 已保存到系统相册"
             liveRequested -> "Live 未生成，普通照片已保存"
@@ -1023,14 +857,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 saveStatusText = saveOutcomeText,
                 savePartialSuccess = false,
                 creativeResult = CreativeResultUi(
-                    photos = capturedPhotos.toList(),
+                    photos = photos,
                     recommendedId = recommendedId,
                     selectedId = recommendedId,
                     recommendationReason = reason,
-                    isBurst = captureExpectedCount == BurstSession.SHOT_COUNT,
+                    isBurst = creativeCapture.isBurst,
                     message = buildList {
-                        addAll(capturedPhotos.mapNotNull(CreativePhotoUi::warning))
-                        if (capturedPhotos.any(CreativePhotoUi::effectWasDownsampled)) {
+                        addAll(photos.mapNotNull(CreativePhotoUi::warning))
+                        if (photos.any(CreativePhotoUi::effectWasDownsampled)) {
                             add("效果副本为控制内存已适度降采样")
                         }
                         add("预览为近似效果，导出可能有细微差异")
@@ -1040,7 +874,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         val saveEvent = when {
-            captureExpectedCount == 3 -> "burst_complete"
+            creativeCapture.isBurst -> "burst_complete"
             recommended.isMotionPhoto -> "live_success"
             liveRequested -> "jpeg_fallback"
             else -> "success"
@@ -1065,16 +899,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun selectCreativePhoto(id: String) {
         val result = _ui.value.creativeResult ?: return
         val selected = result.photos.firstOrNull { it.id == id } ?: return
-        editHistory = EditHistory()
+        val editing = creativeCapture.resetEditing()
         _ui.update {
             it.copy(
                 recentPhoto = selected.displayUri,
                 creativeResult = result.copy(
                     selectedId = id,
-                    edit = editHistory.current,
-                    canUndo = false,
-                    canRedo = false,
-                    canReset = false,
+                    edit = editing.edit,
+                    canUndo = editing.canUndo,
+                    canRedo = editing.canRedo,
+                    canReset = editing.canReset,
                     compareOriginal = false,
                     message = if (id == result.recommendedId) "已选择推荐照片" else "已按你的选择切换；三张照片都保留",
                 ),
@@ -1089,33 +923,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateCreativeEdit(edit: EditAdjustment) {
         val result = _ui.value.creativeResult ?: return
-        val current = editHistory.update(edit)
+        val editing = creativeCapture.updateEdit(edit)
         _ui.update {
-            it.copy(creativeResult = result.copy(edit = current, canUndo = editHistory.canUndo, canRedo = editHistory.canRedo, canReset = editHistory.canReset, message = null))
+            it.copy(creativeResult = result.copy(edit = editing.edit, canUndo = editing.canUndo, canRedo = editing.canRedo, canReset = editing.canReset, message = null))
         }
     }
 
     fun undoCreativeEdit() {
         val result = _ui.value.creativeResult ?: return
-        val current = editHistory.undo()
+        val editing = creativeCapture.undoEdit()
         _ui.update {
-            it.copy(creativeResult = result.copy(edit = current, canUndo = editHistory.canUndo, canRedo = editHistory.canRedo, canReset = editHistory.canReset, message = "已撤销上一步"))
+            it.copy(creativeResult = result.copy(edit = editing.edit, canUndo = editing.canUndo, canRedo = editing.canRedo, canReset = editing.canReset, message = "已撤销上一步"))
         }
     }
 
     fun redoCreativeEdit() {
         val result = _ui.value.creativeResult ?: return
-        val current = editHistory.redo()
+        val editing = creativeCapture.redoEdit()
         _ui.update {
-            it.copy(creativeResult = result.copy(edit = current, canUndo = editHistory.canUndo, canRedo = editHistory.canRedo, canReset = editHistory.canReset, message = "已重做下一步"))
+            it.copy(creativeResult = result.copy(edit = editing.edit, canUndo = editing.canUndo, canRedo = editing.canRedo, canReset = editing.canReset, message = "已重做下一步"))
         }
     }
 
     fun resetCreativeEdit() {
         val result = _ui.value.creativeResult ?: return
-        val current = editHistory.reset()
+        val editing = creativeCapture.resetEdit()
         _ui.update {
-            it.copy(creativeResult = result.copy(edit = current, canUndo = editHistory.canUndo, canRedo = editHistory.canRedo, canReset = editHistory.canReset, message = "已重置编辑"))
+            it.copy(creativeResult = result.copy(edit = editing.edit, canUndo = editing.canUndo, canRedo = editing.canRedo, canReset = editing.canReset, message = "已重置编辑"))
         }
     }
 
@@ -1137,7 +971,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             edit = result.edit,
             captureId = CaptureId(result.selectedPhoto.captureId),
             sequence = result.selectedPhoto.sequence,
-            takenAtMillis = captureTakenAtMillis,
+            takenAtMillis = creativeCapture.takenAtMillis,
             beautyPreset = result.selectedPhoto.beautyPreset,
             beautyEngineVersion = result.selectedPhoto.beautyEngineVersion,
         )
@@ -1149,7 +983,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         return EditRecipe.create(
             captureId = CaptureId(selected.captureId),
             sequence = selected.sequence,
-            takenAtMillis = captureTakenAtMillis,
+            takenAtMillis = creativeCapture.takenAtMillis,
             style = _ui.value.creativeStyle,
             edit = result.edit,
             sourceIsMotionPhoto = selected.isMotionPhoto,
@@ -1196,10 +1030,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
-        if (captureExpectedCount == BurstSession.SHOT_COUNT) {
-            val completed = capturedPhotos.size + if (partial != null) 1 else 0
+        if (creativeCapture.isBurst) {
+            val completed = creativeCapture.capturedCount + if (partial != null) 1 else 0
             val message = "三张连拍在第 ${completed + 1} 张中断，已保留 $completed 张：${error.message ?: "保存失败"}"
-            burstSession.fail(message)
+            creativeCapture.failBurst(message)
             guidance.onSaveFailed(message, retryAvailable)
             emitGuidance()
             recordEvent("save", if (retryAvailable) "burst_failed_retryable" else "burst_failed")
@@ -1226,7 +1060,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun beginRetrySave(): Boolean {
         val accepted = guidance.onRetrySave()
         if (accepted) {
-            if (captureExpectedCount == BurstSession.SHOT_COUNT) burstSession.resumeAfterExplicitRetry()
+            creativeCapture.resumeBurstAfterRetry()
             emitGuidance()
             recordEvent("save_retry", "started")
         }

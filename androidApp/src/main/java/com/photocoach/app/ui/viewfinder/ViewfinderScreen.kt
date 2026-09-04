@@ -13,11 +13,13 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -34,11 +36,23 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Collections
+import androidx.compose.material.icons.rounded.FlashAuto
+import androidx.compose.material.icons.rounded.FlashOff
+import androidx.compose.material.icons.rounded.Settings
+import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.automirrored.rounded.VolumeOff
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -53,14 +67,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.net.toUri
 import com.photocoach.app.FocusStatus
@@ -81,6 +104,7 @@ import com.photocoach.app.creative.CreativeStyle
 import com.photocoach.app.creative.EditAdjustment
 import com.photocoach.app.creative.ImageDecodePolicy
 import com.photocoach.app.creative.ParameterSuggestion
+import com.photocoach.app.ui.theme.PhotoCoachTokens
 import com.photocoach.coach.Audience
 import com.photocoach.coach.GuidanceStage
 import com.photocoach.coach.ShotIntent
@@ -95,59 +119,8 @@ import kotlin.math.roundToInt
 fun ViewfinderScreen(
     ui: ViewfinderUi,
     tiltDegrees: Float,
-    onPreviewReady: (PreviewView) -> Unit,
-    onTapFocus: (x: Float, y: Float, lock: Boolean) -> Unit,
-    onEv: (Float) -> Unit,
-    onSetFocal: (String) -> Unit,
-    onZoomBy: (Float) -> Unit,
-    onVoiceEnabledChange: (Boolean) -> Unit,
-    onSubjectCaptionsEnabledChange: (Boolean) -> Unit,
-    onGridEnabledChange: (Boolean) -> Unit,
-    onLevelEnabledChange: (Boolean) -> Unit,
-    onTimerChange: (CaptureTimer) -> Unit,
-    onAspectRatioChange: (CaptureAspectRatio) -> Unit,
-    onCapturePriorityChange: (CapturePriority) -> Unit,
-    onModePreferenceChange: (CameraModePreference) -> Unit,
-    onResetSettings: () -> Unit,
-    onUnlockFocus: () -> Unit,
-    onToggleFlash: () -> Unit,
-    onSelectIntent: (ShotIntent) -> Unit,
-    onSkip: () -> Unit,
-    onOptional: () -> Unit,
-    onCapture: () -> Unit,
-    onOpenRecentPhoto: (String) -> Unit,
-    onRetrySave: () -> Unit,
-    onDiscardSave: () -> Unit,
-    onRetryCamera: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onExit: () -> Unit,
-    onHideFocusControls: (Int) -> Unit,
-    onDismissControlMessage: () -> Unit,
-    onCreativeStyleChange: (CreativeStyle) -> Unit = {},
-    onCreativeStyleStrengthChange: (Float) -> Unit = {},
-    onToggleCurrentStyleFavorite: () -> Unit = {},
-    onPoseCategoryChange: (PoseCategory?) -> Unit = {},
-    onP1TechniquesEnabledChange: (Boolean) -> Unit = {},
-    onThreeShotBurstChange: (Boolean) -> Unit = {},
-    onSaveStrategyChange: (SaveStrategy) -> Unit = {},
-    onDerivativeQualityChange: (DerivativeQuality) -> Unit = {},
-    onLivePhotoChange: (Boolean) -> Unit = {},
-    onBeautyPresetChange: (BeautyPreset) -> Unit = {},
-    onApplyParameterSuggestion: (ParameterSuggestion) -> Unit = {},
-    onOpenCreativeResult: () -> Unit = {},
-    onSelectCreativePhoto: (String) -> Unit = {},
-    onCreativeEdit: (EditAdjustment) -> Unit = {},
-    onUndoCreativeEdit: () -> Unit = {},
-    onRedoCreativeEdit: () -> Unit = {},
-    onResetCreativeEdit: () -> Unit = {},
-    onCompareOriginal: (Boolean) -> Unit = {},
-    onSaveCreativeCopy: () -> Unit = {},
-    onOpenPhoto: (String) -> Unit = {},
-    onSharePhoto: (String) -> Unit = {},
-    onFavoritePhoto: (String) -> Unit = {},
-    onTrashPhoto: (String) -> Unit = {},
-    onDismissCreativeResult: () -> Unit = {},
-) {
+    actions: ViewfinderActions,
+) = with(actions) {
     ui.focusIndicator?.let { indicator ->
         LaunchedEffect(indicator.generation) {
             delay(FOCUS_CONTROLS_DURATION_MS)
@@ -161,9 +134,14 @@ fun ViewfinderScreen(
         }
     }
 
-    BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
+    val density = LocalDensity.current
+    var portraitDockHeight by remember { mutableStateOf(PORTRAIT_DOCK_CLEARANCE) }
+    val designColors = PhotoCoachTokens.colors
+    BoxWithConstraints(Modifier.fillMaxSize().background(designColors.surfaceBase)) {
         val landscape = maxWidth > maxHeight
-        val portraitPanelMaxHeight = maxHeight * OPERATION_PANEL_MAX_HEIGHT_FRACTION
+        val landscapePanelWidth = adaptiveLandscapePanelWidth(maxWidth)
+        // Preserve the current default-size bound while allowing accessibility text to grow.
+        val portraitPanelMaxHeight = maxHeight * if (density.fontScale > 1.1f) 0.45f else OPERATION_PANEL_MAX_HEIGHT_FRACTION
         if (landscape) {
             Row(Modifier.fillMaxSize()) {
                 PreviewPane(
@@ -210,7 +188,7 @@ fun ViewfinderScreen(
                     onModePreferenceChange = onModePreferenceChange,
                     onApplyParameterSuggestion = onApplyParameterSuggestion,
                     onOpenCreativeResult = onOpenCreativeResult,
-                    modifier = Modifier.width(320.dp).fillMaxSize(),
+                    modifier = Modifier.width(landscapePanelWidth).fillMaxSize().statusBarsPadding(),
                 )
             }
         } else {
@@ -235,6 +213,7 @@ fun ViewfinderScreen(
                     onSelectIntent = onSelectIntent,
                     onExit = onExit,
                     onEv = onEv,
+                    dockClearance = portraitDockHeight,
                     modifier = Modifier.fillMaxSize(),
                 )
                 OperationPanel(
@@ -262,7 +241,8 @@ fun ViewfinderScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .heightIn(max = portraitPanelMaxHeight),
+                        .heightIn(max = portraitPanelMaxHeight)
+                        .onSizeChanged { portraitDockHeight = with(density) { it.height.toDp() } },
                 )
             }
         }
@@ -358,10 +338,10 @@ private fun PreviewPane(
     onExit: () -> Unit,
     onEv: (Float) -> Unit,
     modifier: Modifier,
+    dockClearance: Dp = 0.dp,
 ) {
     var previewEffectError by remember { mutableStateOf<String?>(null) }
     BoxWithConstraints(modifier.background(Color.Black)) {
-        val landscapeSurface = maxWidth > maxHeight
         Box(Modifier.fillMaxSize().testTag("camera_surface")) {
             AndroidView(
                 modifier = Modifier
@@ -415,6 +395,11 @@ private fun PreviewPane(
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
+                        .padding(
+                            start = 16.dp,
+                            end = 16.dp,
+                            bottom = dockClearance + if (ui.showEv && ui.exposureCapability.supported) 64.dp else 8.dp,
+                        )
                         .background(Color.Black.copy(alpha = 0.78f), RoundedCornerShape(6.dp))
                         .padding(horizontal = 10.dp, vertical = 6.dp)
                         .testTag("preview_effect_error"),
@@ -443,8 +428,8 @@ private fun PreviewPane(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .background(Color.Black.copy(alpha = 0.65f))
-                    .padding(bottom = if (landscapeSurface) 0.dp else PORTRAIT_DOCK_CLEARANCE)
+                    .padding(start = 16.dp, end = 16.dp, bottom = dockClearance + 8.dp)
+                    .background(Color.Black.copy(alpha = 0.8f), RoundedCornerShape(20.dp))
                     .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -482,17 +467,17 @@ private fun TopBar(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.72f), Color.Transparent)))
             .statusBarsPadding()
-            .background(Color.Black.copy(alpha = 0.38f))
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SmallControl("退出", "exit", onExit)
+            CameraIconControl(Icons.Rounded.Close, "退出相机", "exit", onExit)
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 PromptSettingsControl(
                     ui = ui,
@@ -509,15 +494,21 @@ private fun TopBar(
                     onModePreferenceChange = onModePreferenceChange,
                     onResetSettings = onResetSettings,
                 )
-                SmallControl(
-                    if (ui.flashSetting == FlashSetting.OFF) "闪光关" else "闪光自动",
+                CameraIconControl(
+                    if (ui.flashSetting == FlashSetting.OFF) Icons.Rounded.FlashOff else Icons.Rounded.FlashAuto,
+                    if (ui.flashSetting == FlashSetting.OFF) "闪光关闭，点按切换" else "闪光自动，点按切换",
                     "flash",
                     onToggleFlash,
                 )
             }
         }
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .align(Alignment.CenterHorizontally)
+                .clip(CircleShape)
+                .background(Color(0xD923262B))
+                .border(1.dp, Color.White.copy(alpha = 0.12f), CircleShape)
+                .padding(horizontal = 4.dp),
             horizontalArrangement = Arrangement.Center,
         ) {
             IntentButton(
@@ -526,7 +517,7 @@ private fun TopBar(
                 tag = "intent_close_up",
                 onClick = { onSelectIntent(ShotIntent.CLOSE_UP) },
             )
-            Spacer(Modifier.width(6.dp))
+            Spacer(Modifier.width(2.dp))
             IntentButton(
                 text = "人带景",
                 selected = ui.guidance.intent == ShotIntent.PERSON_WITH_SCENERY,
@@ -571,45 +562,51 @@ private fun OperationPanel(
     modifier: Modifier,
 ) {
     val haptic = LocalHapticFeedback.current
-    val guidanceBackground = when {
-        ui.guidance.stage is GuidanceStage.SaveFailed -> Color(0xFFFFC7C7)
-        ui.guidance.stage is GuidanceStage.Saved || ui.guidance.stage is GuidanceStage.Ready -> Color(0xFFB9F39A)
-        else -> Color(0xFFFFCF45)
+    val colors = PhotoCoachTokens.colors
+    val spacing = PhotoCoachTokens.spacing
+    val radii = PhotoCoachTokens.radii
+    val masks = PhotoCoachTokens.masks
+    val guidanceHeight = 48.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)
+    val guidanceAccent = when {
+        ui.guidance.stage is GuidanceStage.SaveFailed -> MaterialTheme.colorScheme.error
+        ui.guidance.stage is GuidanceStage.Saved -> MaterialTheme.colorScheme.secondary
+        (ui.guidance.stage as? GuidanceStage.Ready)?.qualityConfirmed == true -> MaterialTheme.colorScheme.secondary
+        else -> MaterialTheme.colorScheme.primary
     }
-    val guidanceForeground = Color(0xFF15130D)
     Column(
         modifier = modifier
             .testTag("operation_panel")
-            .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-            .background(Color(0xF20D0D0F))
+            .clip(RoundedCornerShape(topStart = radii.panel, topEnd = radii.panel))
+            .background(colors.surfaceBase.copy(alpha = masks.dock))
             .navigationBarsPadding()
-            .padding(horizontal = 10.dp, vertical = 4.dp),
+            .padding(horizontal = spacing.space3, vertical = spacing.compactDockVertical),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().height(48.dp),
+            modifier = Modifier.fillMaxWidth().height(guidanceHeight),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(
                 modifier = Modifier
                     .weight(1f)
-                    .height(46.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(guidanceBackground)
-                    .padding(horizontal = 10.dp),
+                    .height(guidanceHeight)
+                    .clip(RoundedCornerShape(radii.card))
+                    .background(colors.surfaceOverlay)
+                    .border(1.dp, guidanceAccent.copy(alpha = 0.3f), RoundedCornerShape(radii.card))
+                    .padding(horizontal = spacing.space3),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     text = guidanceLabel(ui),
-                    color = guidanceForeground,
-                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Black),
-                    modifier = Modifier.widthIn(min = 34.dp).testTag("guidance_label"),
+                    color = guidanceAccent,
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                    modifier = Modifier.widthIn(min = 32.dp, max = 60.dp).testTag("guidance_label"),
                 )
-                Spacer(Modifier.width(4.dp))
+                Spacer(Modifier.width(10.dp))
                 Text(
                     text = guidanceText(ui),
-                    color = guidanceForeground,
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Black),
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f).testTag("guidance_text"),
@@ -652,6 +649,7 @@ private fun OperationPanel(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(
+                modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -662,6 +660,42 @@ private fun OperationPanel(
                         tag = "focal_$index",
                     ) { onSetFocal(preset.cameraId) }
                 }
+            }
+            Box(
+                modifier = Modifier
+                    .size(64.dp)
+                    .clip(CircleShape)
+                    .border(2.dp, Color.White.copy(alpha = if (ui.guidance.shutterEnabled) 1f else 0.35f), CircleShape)
+                    .clickable(
+                        enabled = ui.guidance.shutterEnabled,
+                        role = Role.Button,
+                        onClickLabel = if (ui.countdownSeconds != null) "取消倒计时" else "拍照",
+                    ) {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onCapture()
+                    }
+                    .semantics { contentDescription = if (ui.countdownSeconds != null) "取消倒计时" else "拍照快门" }
+                    .testTag("shutter")
+                    .padding(6.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier.fillMaxSize().background(
+                        if (ui.guidance.shutterEnabled) colors.shutterEnabled else colors.shutterDisabled,
+                        CircleShape,
+                    ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    if (ui.countdownSeconds != null) {
+                        Text("停", color = colors.surfaceRaised, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 CreativeCaptureControl(
                     ui = ui,
                     onStyleChange = onCreativeStyleChange,
@@ -678,18 +712,8 @@ private fun OperationPanel(
                     onApplyParameterSuggestion = onApplyParameterSuggestion,
                     onOpenCreativeResult = onOpenCreativeResult,
                 )
+                LatestPhoto(ui.recentPhoto, onOpenRecentPhoto)
             }
-            Button(
-                onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    onCapture()
-                },
-                enabled = ui.guidance.shutterEnabled,
-                modifier = Modifier.size(56.dp).clip(CircleShape).testTag("shutter"),
-            ) {
-                Text(if (ui.countdownSeconds != null) "停" else "拍")
-            }
-            LatestPhoto(ui.recentPhoto, onOpenRecentPhoto)
         }
     }
 }
@@ -698,15 +722,18 @@ private fun OperationPanel(
 private fun LatestPhoto(uri: String?, onClick: (String) -> Unit) {
     if (uri == null) {
         Box(
-            Modifier.size(48.dp).border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp)),
+            Modifier.size(48.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(14.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), RoundedCornerShape(14.dp)),
             contentAlignment = Alignment.Center,
-        ) { Text("最近", style = MaterialTheme.typography.labelSmall) }
+        ) { Icon(Icons.Rounded.Collections, "尚无最近照片", tint = MaterialTheme.colorScheme.onSurfaceVariant) }
         return
     }
     Box(
         modifier = Modifier
             .size(48.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(14.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
             .background(Color.DarkGray)
             .clickable { onClick(uri) }
             .testTag("recent_photo"),
@@ -741,24 +768,30 @@ private fun CreativeCaptureControl(
     onOpenCreativeResult: () -> Unit,
 ) {
     val capturing = ui.guidance.stage is GuidanceStage.Capturing
+    val largeText = LocalDensity.current.fontScale > 1.3f
     var expanded by remember { mutableStateOf(false) }
     Box {
         TextButton(
             onClick = { expanded = true },
             enabled = !capturing,
-            modifier = Modifier.height(48.dp).widthIn(min = 76.dp).testTag("creative_capture_menu"),
+            contentPadding = PaddingValues(4.dp),
+            modifier = Modifier.height(if (largeText) 64.dp else 48.dp).width(68.dp).testTag("creative_capture_menu"),
         ) {
-            Text(
-                ui.burstProgress?.let { "$it/3" }
-                    ?: if (ui.beautyPreset != BeautyPreset.OFF) "美颜·${ui.beautyPreset.label}"
-                    else "美颜·风格",
-                maxLines = 1,
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                if (!largeText) Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(20.dp))
+                Text(
+                    ui.burstProgress?.let { "$it/3" }
+                        ?: if (ui.beautyPreset != BeautyPreset.OFF) "美颜·${ui.beautyPreset.label}"
+                        else "美颜·风格",
+                    maxLines = if (largeText) 2 else 1,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
         }
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.width(320.dp),
+            modifier = Modifier.widthIn(min = 280.dp, max = 360.dp),
         ) {
             StyleMenuItem(
                 style = CreativeStyle.ORIGINAL,
@@ -1039,7 +1072,7 @@ private fun StyleMenuItem(
 }
 
 @Composable
-private fun CreativeStyleControl(
+internal fun CreativeStyleControl(
     selected: CreativeStyle,
     enabled: Boolean,
     onStyleChange: (CreativeStyle) -> Unit,
@@ -1072,282 +1105,13 @@ private fun CreativeStyleControl(
 }
 
 @Composable
-private fun CreativeResultPanel(
-    ui: ViewfinderUi,
-    result: CreativeResultUi,
-    onSelectPhoto: (String) -> Unit,
-    onStyleChange: (CreativeStyle) -> Unit,
-    onEdit: (EditAdjustment) -> Unit,
-    onUndo: () -> Unit,
-    onRedo: () -> Unit,
-    onReset: () -> Unit,
-    onCompareOriginal: (Boolean) -> Unit,
-    onSaveCopy: () -> Unit,
-    onOpenPhoto: (String) -> Unit,
-    onSharePhoto: (String) -> Unit,
-    onFavoritePhoto: (String) -> Unit,
-    onTrashPhoto: (String) -> Unit,
-    onDismiss: () -> Unit,
-    modifier: Modifier,
-) {
-    Box(modifier.background(Color.Black.copy(alpha = 0.92f)).testTag("creative_result")) {
-        Column(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .fillMaxWidth()
-                .heightIn(max = 760.dp)
-                .verticalScroll(rememberScrollState())
-                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(16.dp))
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Column {
-                    Text(if (result.isBurst) "三张都已保留" else "原片已保留", style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        if (result.isBurst) "推荐第 ${result.photos.first { it.id == result.recommendedId }.sequence} 张：${result.recommendationReason}；你可以改选"
-                        else "可撤销轻编辑，只会另存副本",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-                TextButton(onClick = onDismiss, modifier = Modifier.height(48.dp).testTag("creative_done")) { Text("完成") }
-            }
-            EditedPhotoPreview(
-                uri = result.selectedPhoto.originalUri,
-                style = if (result.compareOriginal) CreativeStyle.ORIGINAL else ui.creativeStyle,
-                edit = if (result.compareOriginal) EditAdjustment(styleStrength = 0f) else result.edit,
-                modifier = Modifier.fillMaxWidth().height(220.dp),
-            )
-            if (result.selectedPhoto.beautyPreset != BeautyPreset.OFF) {
-                Text("美颜·${result.selectedPhoto.beautyPreset.label}将在另存时应用；此处预览仅显示颜色编辑，对比原图为未美颜原片",
-                    style = MaterialTheme.typography.labelSmall, modifier = Modifier.testTag("beauty_export_notice"))
-            }
-            if (result.photos.size > 1) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    result.photos.forEach { photo ->
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clickable { onSelectPhoto(photo.id) }
-                                .border(
-                                    2.dp,
-                                    if (photo.id == result.selectedId) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                    RoundedCornerShape(8.dp),
-                                )
-                                .padding(4.dp)
-                                .testTag("burst_photo_${photo.sequence}"),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            ResultThumbnail(photo.displayUri, Modifier.fillMaxWidth().height(72.dp))
-                            Text(
-                                buildString {
-                                    append("第 ${photo.sequence} 张")
-                                    if (photo.id == result.recommendedId) append(" · 推荐")
-                                },
-                                style = MaterialTheme.typography.labelSmall,
-                            )
-                        }
-                    }
-                }
-            }
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("风格", modifier = Modifier.width(56.dp))
-                CreativeStyleControl(ui.creativeStyle, enabled = !result.exportInProgress, onStyleChange = onStyleChange)
-                Spacer(Modifier.width(8.dp))
-                Text("预览为近似效果，导出可能有细微差异", style = MaterialTheme.typography.labelSmall)
-            }
-            EditSlider("曝光", result.edit.exposureStops, EditAdjustment.MIN_EXPOSURE..EditAdjustment.MAX_EXPOSURE) {
-                onEdit(result.edit.copy(exposureStops = it))
-            }
-            EditSlider("对比度", result.edit.contrast, EditAdjustment.MIN_CONTRAST..EditAdjustment.MAX_CONTRAST) {
-                onEdit(result.edit.copy(contrast = it))
-            }
-            EditSlider("饱和度", result.edit.saturation, EditAdjustment.MIN_SATURATION..EditAdjustment.MAX_SATURATION) {
-                onEdit(result.edit.copy(saturation = it))
-            }
-            EditSlider("色温", result.edit.temperature, EditAdjustment.MIN_TEMPERATURE..EditAdjustment.MAX_TEMPERATURE) {
-                onEdit(result.edit.copy(temperature = it))
-            }
-            EditSlider("色调", result.edit.tint, EditAdjustment.MIN_TINT..EditAdjustment.MAX_TINT) {
-                onEdit(result.edit.copy(tint = it))
-            }
-            EditSlider("褪色", result.edit.fade, EditAdjustment.MIN_FADE..EditAdjustment.MAX_FADE) {
-                onEdit(result.edit.copy(fade = it))
-            }
-            EditSlider("强度", result.edit.styleStrength, 0f..1f) {
-                onEdit(result.edit.copy(styleStrength = it))
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onUndo, enabled = result.canUndo, modifier = Modifier.height(48.dp).testTag("creative_undo")) {
-                    Text("撤销")
-                }
-                TextButton(onClick = onRedo, enabled = result.canRedo, modifier = Modifier.height(48.dp).testTag("creative_redo")) {
-                    Text("重做")
-                }
-                TextButton(onClick = onReset, enabled = result.canReset, modifier = Modifier.height(48.dp).testTag("creative_reset")) {
-                    Text("重置")
-                }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(
-                    onClick = { onCompareOriginal(!result.compareOriginal) },
-                    modifier = Modifier.height(48.dp).testTag("creative_compare_original"),
-                ) { Text(if (result.compareOriginal) "查看效果" else "对比原图") }
-                Button(
-                    onClick = onSaveCopy,
-                    enabled = !result.exportInProgress,
-                    modifier = Modifier.weight(1f).height(48.dp).testTag("creative_save_copy"),
-                ) { Text(if (result.exportInProgress) "正在另存" else "另存副本") }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                val uri = result.selectedPhoto.displayUri
-                TextButton(onClick = { onOpenPhoto(uri) }, modifier = Modifier.height(48.dp).testTag("post_open")) { Text("打开") }
-                TextButton(onClick = { onSharePhoto(uri) }, modifier = Modifier.height(48.dp).testTag("post_share")) { Text("分享") }
-                TextButton(onClick = { onFavoritePhoto(uri) }, modifier = Modifier.height(48.dp).testTag("post_favorite")) { Text("收藏") }
-                TextButton(onClick = { onTrashPhoto(uri) }, modifier = Modifier.height(48.dp).testTag("post_trash")) { Text("回收站") }
-            }
-            result.message?.let { Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("creative_message")) }
-        }
-    }
-}
-
-@Composable
-private fun EditSlider(label: String, value: Float, range: ClosedFloatingPointRange<Float>, onValueChange: (Float) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, modifier = Modifier.width(56.dp))
-        Slider(value = value, onValueChange = onValueChange, valueRange = range, modifier = Modifier.weight(1f))
-        Text(formatSigned(value), modifier = Modifier.width(44.dp))
-    }
-}
-
-@Composable
-private fun EditedPhotoPreview(
-    uri: String,
-    style: CreativeStyle,
-    edit: EditAdjustment,
-    modifier: Modifier,
-) {
-    BoundedLocalImage(
-        uri = uri,
-        maximumPixels = ImageDecodePolicy.RESULT_PREVIEW_MAX_PIXELS,
-        scaleType = ImageView.ScaleType.CENTER_INSIDE,
-        contentDescription = "所选原片的编辑预览",
-        colorMatrix = CreativeColorMatrix.forSelection(style, edit),
-        errorLabel = "原片预览不可用",
-        errorTag = "creative_preview_error",
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color.DarkGray)
-            .testTag("creative_edit_preview"),
-    )
-}
-
-@Composable
-private fun ResultThumbnail(uri: String, modifier: Modifier) {
-    BoundedLocalImage(
-        uri = uri,
-        maximumPixels = ImageDecodePolicy.THUMBNAIL_MAX_PIXELS,
-        scaleType = ImageView.ScaleType.CENTER_CROP,
-        contentDescription = "连拍照片缩略图",
-        errorLabel = "缩略图不可用",
-        errorTag = "burst_thumbnail_error",
-        modifier = modifier.clip(RoundedCornerShape(6.dp)).background(Color.DarkGray),
-    )
-}
-
-@Composable
-private fun BoundedLocalImage(
-    uri: String,
-    maximumPixels: Long,
-    scaleType: ImageView.ScaleType,
-    contentDescription: String,
-    errorLabel: String,
-    errorTag: String,
-    modifier: Modifier,
-    colorMatrix: FloatArray? = null,
-) {
-    var loadError by remember(uri, maximumPixels) { mutableStateOf<String?>(null) }
-    var effectError by remember(uri) { mutableStateOf<String?>(null) }
-    val imageControllers = remember { IdentityHashMap<ImageView, BoundedBitmapImageController>() }
-    Box(modifier, contentAlignment = Alignment.Center) {
-        AndroidView(
-            factory = { context ->
-                ImageView(context).also { image ->
-                    imageControllers[image] = BoundedBitmapImageController(image)
-                }
-            },
-            modifier = Modifier.fillMaxSize(),
-            onReset = { image -> imageControllers[image]?.releaseImage() },
-            onRelease = { image -> imageControllers.remove(image)?.releaseImage() },
-            update = { image ->
-                image.scaleType = scaleType
-                image.contentDescription = contentDescription
-                imageControllers.getValue(image).loadBounded(uri.toUri(), maximumPixels) { loadError = it }
-                effectError = applyImageColorMatrix(image, colorMatrix)
-            },
-        )
-        val visibleError = effectError ?: loadError
-        visibleError?.let {
-            Text(
-                text = if (effectError != null) "效果不可用，已显示原图" else errorLabel,
-                color = Color.White,
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.78f), RoundedCornerShape(4.dp))
-                    .padding(horizontal = 6.dp, vertical = 4.dp)
-                    .testTag(errorTag),
-            )
-        }
-    }
-}
-
-private fun applyImageColorMatrix(image: ImageView, matrix: FloatArray?): String? = try {
-    if (matrix == null || CreativeColorMatrix.isIdentity(matrix)) {
-        image.clearColorFilter()
-    } else {
-        image.colorFilter = ColorMatrixColorFilter(AndroidColorMatrix(matrix))
-    }
-    null
-} catch (error: Throwable) {
-    runCatching { image.clearColorFilter() }
-    error.message ?: "无法显示创意效果"
-}
-
-private fun applyPreviewStyle(preview: PreviewView, style: CreativeStyle, strength: Float): String? {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-        return if (style == CreativeStyle.ORIGINAL) null else "当前系统仅显示原图预览"
-    }
-    val matrix = CreativeColorMatrix.forSelection(style, EditAdjustment(styleStrength = strength))
-    val applied = applyEffectWithOriginalFallback(
-        applyEffect = {
-            preview.setRenderEffect(
-                if (CreativeColorMatrix.isIdentity(matrix)) null
-                else RenderEffect.createColorFilterEffect(ColorMatrixColorFilter(AndroidColorMatrix(matrix))),
-            )
-        },
-        clearEffect = { preview.setRenderEffect(null) },
-    )
-    return if (applied) null else "创意预览效果不可用，已显示原图"
-}
-
-internal fun applyEffectWithOriginalFallback(
-    applyEffect: () -> Unit,
-    clearEffect: () -> Unit,
-): Boolean = try {
-    applyEffect()
-    true
-} catch (error: Throwable) {
-    runCatching(clearEffect)
-    false
-}
-
-@Composable
 private fun FocusOverlay(ui: ViewfinderUi) {
     val indicator = ui.focusIndicator ?: return
+    val colors = PhotoCoachTokens.colors
     val color = when (indicator.status) {
-        FocusStatus.FOCUSING -> Color.White
-        FocusStatus.SUCCESS -> Color(0xFF8FE388)
-        FocusStatus.FAILED -> Color(0xFFFFC857)
+        FocusStatus.FOCUSING -> colors.textPrimary
+        FocusStatus.SUCCESS -> colors.feedbackPositive
+        FocusStatus.FAILED -> colors.feedbackWarning
     }
     Canvas(Modifier.fillMaxSize()) {
         drawCircle(color = color, radius = 34f, center = androidx.compose.ui.geometry.Offset(indicator.x, indicator.y), style = Stroke(3f))
@@ -1361,22 +1125,28 @@ private fun ErrorRecovery(
     onSettings: () -> Unit,
     modifier: Modifier,
 ) {
+    val colors = PhotoCoachTokens.colors
+    val spacing = PhotoCoachTokens.spacing
+    val radii = PhotoCoachTokens.radii
+    val masks = PhotoCoachTokens.masks
     Column(
         modifier = modifier
-            .background(Color.Black.copy(alpha = 0.86f), RoundedCornerShape(12.dp))
-            .padding(20.dp),
+            .background(colors.surfaceBase.copy(alpha = masks.blocking), RoundedCornerShape(radii.control))
+            .padding(spacing.space4),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(spacing.space2),
     ) {
-        Text(message, color = Color.White)
+        Text(message, color = colors.textPrimary)
         Button(onClick = onRetry, modifier = Modifier.testTag("camera_retry")) { Text("重试开相机") }
         TextButton(onClick = onSettings, modifier = Modifier.testTag("camera_settings")) { Text("去系统设置") }
     }
 }
 
 @Composable
-private fun SmallControl(text: String, tag: String, onClick: () -> Unit) {
-    TextButton(onClick = onClick, modifier = Modifier.height(48.dp).testTag(tag)) { Text(text, color = Color.White) }
+private fun CameraIconControl(icon: ImageVector, description: String, tag: String, onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(48.dp).testTag(tag)) {
+        Icon(icon, description, tint = Color.White, modifier = Modifier.size(22.dp))
+    }
 }
 
 @Composable
@@ -1387,11 +1157,16 @@ private fun PromptSettingsControl(
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box {
-        SmallControl(
-            text = promptSummary(ui),
-            tag = "prompt_settings",
-            onClick = { expanded = true },
-        )
+        TextButton(onClick = { expanded = true }, modifier = Modifier.height(48.dp).testTag("prompt_settings")) {
+            Icon(
+                if (ui.voiceEnabled && !ui.ttsFailed) Icons.AutoMirrored.Rounded.VolumeUp else Icons.AutoMirrored.Rounded.VolumeOff,
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(promptSummary(ui), color = Color.White, style = MaterialTheme.typography.labelMedium)
+        }
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
@@ -1447,11 +1222,11 @@ private fun CameraSettingsControl(
     var expanded by remember { mutableStateOf(false) }
     val modeOptions = cameraModeOptions(ui)
     Box {
-        SmallControl("设置·${modeLabel(ui.activeMode)}", "camera_settings_menu", onClick = { expanded = true })
+        CameraIconControl(Icons.Rounded.Settings, "相机设置，当前${modeLabel(ui.activeMode)}模式", "camera_settings_menu", onClick = { expanded = true })
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
-            modifier = Modifier.width(320.dp),
+            modifier = Modifier.widthIn(min = 280.dp, max = 360.dp),
         ) {
             ToggleSettingItem("三分网格", ui.gridEnabled, "grid_toggle", onGridEnabledChange)
             ToggleSettingItem("水平仪", ui.levelEnabled, "level_toggle", onLevelEnabledChange)
@@ -1576,26 +1351,43 @@ private fun capabilitySummary(ui: ViewfinderUi): String {
 private fun formatOneDecimal(value: Float): String =
     ((value * 10f).roundToInt() / 10f).toString()
 
-private fun formatSigned(value: Float): String {
+internal fun formatSigned(value: Float): String {
     val text = formatOneDecimal(value)
     return if (value > 0f) "+$text" else text
 }
 
 @Composable
 private fun IntentButton(text: String, selected: Boolean, tag: String, onClick: () -> Unit) {
-    if (selected) {
-        FilledTonalButton(onClick = onClick, modifier = Modifier.height(48.dp).testTag(tag)) { Text(text) }
-    } else {
-        TextButton(onClick = onClick, modifier = Modifier.height(48.dp).testTag(tag)) { Text(text, color = Color.White) }
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.height(48.dp).semantics { this.selected = selected }.testTag(tag),
+        colors = ButtonDefaults.textButtonColors(contentColor = if (selected) MaterialTheme.colorScheme.primary else Color.White),
+    ) {
+        Text(text, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+        if (selected) {
+            Spacer(Modifier.width(6.dp))
+            Box(Modifier.size(4.dp).background(MaterialTheme.colorScheme.primary, CircleShape))
+        }
     }
 }
 
 @Composable
 private fun ZoomButton(text: String, selected: Boolean, tag: String, onClick: () -> Unit) {
-    if (selected) {
-        FilledTonalButton(onClick = onClick, modifier = Modifier.height(48.dp).testTag(tag)) { Text(text) }
-    } else {
-        TextButton(onClick = onClick, modifier = Modifier.height(48.dp).testTag(tag)) { Text(text) }
+    Box(
+        modifier = Modifier.size(48.dp)
+            .clip(CircleShape)
+            .clickable(role = Role.RadioButton, onClick = onClick)
+            .semantics { this.selected = selected }
+            .testTag(tag),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier.size(36.dp).background(if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(text, color = if (selected) MaterialTheme.colorScheme.primary else Color.White,
+                style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
@@ -1668,5 +1460,13 @@ private fun promptSummary(ui: ViewfinderUi): String = when {
 
 private const val FOCUS_CONTROLS_DURATION_MS = 4_000L
 private const val CONTROL_MESSAGE_DURATION_MS = 2_000L
+internal fun adaptiveLandscapePanelWidth(windowWidth: Dp): Dp {
+    val minimumControlsWidth = 252.dp
+    val preferred = windowWidth * 0.36f
+    val maximum = 360.dp
+    val maximumWhilePreservingPreview = (windowWidth - 320.dp).coerceAtLeast(minimumControlsWidth)
+    return preferred.coerceIn(minimumControlsWidth, maximum).coerceAtMost(maximumWhilePreservingPreview)
+}
+
 private const val OPERATION_PANEL_MAX_HEIGHT_FRACTION = 0.20f
 private val PORTRAIT_DOCK_CLEARANCE = 156.dp
