@@ -21,9 +21,6 @@ import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
-import androidx.camera.core.SessionConfig
-import androidx.camera.core.UseCaseGroup
-import androidx.camera.core.UseCase
 import androidx.camera.core.ViewPort
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
@@ -31,13 +28,8 @@ import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import androidx.camera.video.FileOutputOptions
-import androidx.camera.video.Quality
-import androidx.camera.video.QualitySelector
 import androidx.camera.video.Recorder
-import androidx.camera.video.Recording
 import androidx.camera.video.VideoCapture
-import androidx.camera.video.VideoRecordEvent
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.photocoach.app.analysis.AnalyzerExtras
@@ -60,7 +52,6 @@ import java.io.File
 import java.io.IOException
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
@@ -91,23 +82,31 @@ class CameraBinder(
 ) {
     private val analysisExecutor: ExecutorService = Executors.newSingleThreadExecutor()
     private val saveExecutor: ExecutorService = Executors.newSingleThreadExecutor()
-    private val videoExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private val creativeProcessor = CreativeImageProcessor(context.cacheDir)
     private val recipeStore = EditRecipeStore(File(context.filesDir, "edit-recipes"))
     private val journalStore = SaveJournalStore(File(context.filesDir, "save-journal"))
+    private val interruptedSaveRecovery = InterruptedSaveRecovery(
+        resolver = context.contentResolver,
+        motionDirectory = File(context.cacheDir, "motion-recordings"),
+        journalStore = journalStore,
+        recipeStore = recipeStore,
+        creativeProcessor = creativeProcessor,
+    )
     private val mainExecutor by lazy { ContextCompat.getMainExecutor(context) }
+    private val liveRecording = LiveRecordingController(
+        context = context,
+        mainExecutor = mainExecutor,
+        directory = File(context.cacheDir, "motion-recordings"),
+        onStartFailure = ::downgradeLive,
+        onFinalized = ::onLiveRecordingFinalized,
+    )
     private var provider: ProcessCameraProvider? = null
     private var extensions: ExtensionsManager? = null
     private var discovered = DiscoveredCameras(emptyList(), emptyMap())
     private var selectedFocalId: String? = null
     private var camera: Camera? = null
     private var imageCapture: ImageCapture? = null
-    private var videoCapture: VideoCapture<Recorder>? = null
-    private var recorder: Recorder? = null
-    private var activeRecording: Recording? = null
-    private var activeVideoFile: File? = null
-    private val recordingSession = LiveRecordingSession()
-    private val ownedUseCases = mutableSetOf<UseCase>()
+    private var sessionCoordinator: CameraSessionCoordinator? = null
     private var livePhotoAvailable = false
     private var liveFallbackReason: String? = null
     private var onLiveFallback: ((String) -> Unit)? = null
@@ -131,7 +130,7 @@ class CameraBinder(
 
     suspend fun prepare() = prepareMutex.withLock {
         if (provider != null) return
-        withContext(Dispatchers.IO) { recoverInterruptedSaves() }
+        withContext(Dispatchers.IO) { interruptedSaveRecovery.recover() }
         val cameraProvider = awaitProvider()
         provider = cameraProvider
         extensions = runCatching { awaitExtensions(cameraProvider) }.getOrNull()
@@ -237,17 +236,10 @@ class CameraBinder(
         liveFallbackReason = if (settings.livePhotoEnabled && !thermalPolicy.allowNewLive) {
             "设备温度较高，Live 已降级为普通照片"
         } else null
-        recorder = null
-        videoCapture = null
+        liveRecording.install(null)
         val liveCandidates: List<Pair<Recorder, VideoCapture<Recorder>>> = if (liveRequested) {
             (if (thermalPolicy.preferSdLive) LIVE_VIDEO_TIER_FALLBACK_ORDER.reversed() else LIVE_VIDEO_TIER_FALLBACK_ORDER).mapNotNull { tier ->
-                runCatching {
-                    val candidateRecorder = Recorder.Builder()
-                        .setExecutor(videoExecutor)
-                        .setQualitySelector(QualitySelector.from(tier.toCameraXQuality()))
-                        .build()
-                    candidateRecorder to VideoCapture.withOutput(candidateRecorder)
-                }.getOrNull()
+                runCatching { liveRecording.createCandidate(tier) }.getOrNull()
             }.also {
                 if (it.isEmpty()) liveFallbackReason = "编码器不可用，已回退普通照片"
             }
@@ -265,37 +257,25 @@ class CameraBinder(
             .setScaleType(ViewPort.FILL_CENTER)
             .setLayoutDirection(viewPortLayoutDirection)
             .build()
-        fun useCaseGroup(video: VideoCapture<Recorder>?): UseCaseGroup = UseCaseGroup.Builder()
-            .setViewPort(viewPort)
-            .addUseCase(preview)
-            .addUseCase(analysis)
-            .addUseCase(capture)
-            .apply { if (video != null) addUseCase(video) }
-            .apply { beautyEffect?.let { addEffect(it) } }
-            .build()
-        fun sessionConfig(video: VideoCapture<Recorder>): SessionConfig =
-            SessionConfig.Builder(listOf(preview, analysis, capture, video))
-                .setViewPort(viewPort)
-                .build()
-        fun sessionSupported(video: VideoCapture<Recorder>): Boolean = runCatching {
-            cameraProvider.getCameraInfo(selector).isSessionConfigSupported(sessionConfig(video))
-        }.getOrDefault(true)
-        fun bindOwned(selector: CameraSelector, video: VideoCapture<Recorder>?): Camera {
-            val group = useCaseGroup(video)
-            // Register before binding: even a partially failed attempt belongs to this binder.
-            ownedUseCases.addAll(group.useCases)
-            return cameraProvider.bindToLifecycle(owner, selector, group)
-        }
+        val activeSession = CameraSessionCoordinator(
+            provider = cameraProvider,
+            owner = owner,
+            preview = preview,
+            analysis = analysis,
+            capture = capture,
+            viewPort = viewPort,
+            effect = { beautyEffect },
+        ).also { sessionCoordinator = it }
 
         if (liveRequested) {
             var liveBindingError: Exception? = null
             val boundCandidate = firstBindableLiveCandidate(
                 candidates = liveCandidates,
-                isSupported = { (_, candidateVideo) -> sessionSupported(candidateVideo) },
+                isSupported = { (_, candidateVideo) -> activeSession.isSupported(selector, candidateVideo) },
                 tryBind = { (_, candidateVideo) ->
                     unbindOwnedUseCases()
                     try {
-                        camera = bindOwned(selector, candidateVideo)
+                        camera = activeSession.bind(selector, candidateVideo)
                         true
                     } catch (error: Exception) {
                         liveBindingError = error
@@ -304,21 +284,19 @@ class CameraBinder(
                 },
             )
             if (boundCandidate != null) {
-                recorder = boundCandidate.first
-                videoCapture = boundCandidate.second
+                liveRecording.install(boundCandidate.first)
                 livePhotoAvailable = true
             }
             if (!livePhotoAvailable) {
                 unbindOwnedUseCases()
-                recorder = null
-                videoCapture = null
+                liveRecording.install(null)
                 liveFallbackReason = when {
                     liveFallbackReason != null -> liveFallbackReason
                     liveBindingError != null -> "当前设备无法同时绑定 Live 与实时指导，已回退普通照片"
                     else -> "当前相机会话不支持 Live 与实时指导，已回退普通照片"
                 }
                 try {
-                    camera = bindOwned(selector, null)
+                    camera = activeSession.bind(selector, null)
                     activeMode = SuggestedMode.PHOTO
                 } catch (fallbackError: Exception) {
                     onError(fallbackError)
@@ -327,7 +305,7 @@ class CameraBinder(
             }
         } else {
             try {
-                camera = bindOwned(boundSelector, null)
+                camera = activeSession.bind(boundSelector, null)
             } catch (bindingError: Exception) {
                 unbindOwnedUseCases()
                 if (choice is ExtensionChoice.Enabled || beautyEffect != null) {
@@ -338,7 +316,7 @@ class CameraBinder(
                         mainExecutor.execute { onBeautyFallback("美颜绑定失败，正在尝试普通预览") }
                     }
                     try {
-                        camera = bindOwned(selector, null)
+                        camera = activeSession.bind(selector, null)
                         activeMode = SuggestedMode.PHOTO
                         extensionFallback = true
                     } catch (fallbackError: Exception) {
@@ -513,9 +491,9 @@ class CameraBinder(
             return
         }
         val shutterElapsedMs = SystemClock.elapsedRealtime()
-        val recordingAtShutter = activeRecording
-        val recordingStartedAtShutterMs = recordingSession.startedElapsedMs
-        val liveWindowReadyAtShutter = recordingAtShutter != null && recordingStartedAtShutterMs != null &&
+        val recordingAtShutter = liveRecording.marker()
+        val recordingStartedAtShutterMs = recordingAtShutter?.startedElapsedMs
+        val liveWindowReadyAtShutter = recordingStartedAtShutterMs != null &&
             MotionTemporaryPolicy.hasFullShutterWindow(shutterElapsedMs - recordingStartedAtShutterMs)
         capture.takePicture(
             ImageCapture.OutputFileOptions.Builder(file).build(),
@@ -525,12 +503,12 @@ class CameraBinder(
                     val liveWillPackage = spec.livePhotoRequested &&
                         livePhotoAvailable &&
                         liveWindowReadyAtShutter &&
-                        activeRecording === recordingAtShutter
+                        liveRecording.isCurrent(recordingAtShutter)
                     val liveCaptureFallbackReason = when {
                         !spec.livePhotoRequested -> null
                         !livePhotoAvailable -> liveFallbackReason ?: "Live 不可用，已保存普通照片"
                         !liveWindowReadyAtShutter -> "Live 缓冲窗口不足，已保存普通照片"
-                        activeRecording !== recordingAtShutter -> "Live 录制分段已切换，已保存普通照片"
+                        !liveRecording.isCurrent(recordingAtShutter) -> "Live 录制分段已切换，已保存普通照片"
                         else -> null
                     }
                     pendingCapture = PendingCapture(
@@ -558,17 +536,16 @@ class CameraBinder(
                         if (liveEstimate.fits(available)) {
                             pending.coordinator.complete(SaveStage.SPACE_CHECK)
                             writeJournal(pending)
-                            videoExecutor.schedule(
-                                { runCatching { recordingAtShutter?.stop() } },
-                                (LIVE_POST_SHUTTER_MS - (SystemClock.elapsedRealtime() - shutterElapsedMs)).coerceAtLeast(0L),
-                                TimeUnit.MILLISECONDS,
+                            liveRecording.stopAfter(
+                                requireNotNull(recordingAtShutter),
+                                LIVE_POST_SHUTTER_MS - (SystemClock.elapsedRealtime() - shutterElapsedMs),
                             )
                         } else {
                             pending.coordinator.complete(SaveStage.SPACE_CHECK)
                             pending.coordinator.fallbackFromMotionPhoto("Live 临时空间不足")
                             pending.warnings += "Live 空间不足，已降级普通照片"
                             writeJournal(pending)
-                            runCatching { recordingAtShutter?.stop() }
+                            recordingAtShutter?.let { liveRecording.stopAfter(it, 0L) }
                             publishPending(onSaved, onSaveError)
                         }
                     } else {
@@ -580,7 +557,7 @@ class CameraBinder(
                 override fun onError(exception: ImageCaptureException) {
                     captureInProgress = false
                     file.delete()
-                    if (livePhotoAvailable && activeRecording == null) startRollingRecording()
+                    if (livePhotoAvailable && !liveRecording.isRecording) startRollingRecording()
                     onCaptureError(exception)
                 }
             },
@@ -609,7 +586,7 @@ class CameraBinder(
             journalStore.delete(pending.toJournal())
         }
         pendingCapture = null
-        if (livePhotoAvailable && activeRecording == null) startRollingRecording()
+        if (livePhotoAvailable && !liveRecording.isRecording) startRollingRecording()
     }
 
     fun exportEditedCopy(
@@ -663,13 +640,11 @@ class CameraBinder(
         analyzer?.close()
         analysisExecutor.shutdown()
         saveExecutor.shutdown()
-        videoExecutor.shutdown()
+        liveRecording.shutdown()
     }
 
     private fun unbindOwnedUseCases() {
-        if (ownedUseCases.isEmpty()) return
-        provider?.unbind(*ownedUseCases.toTypedArray())
-        ownedUseCases.clear()
+        sessionCoordinator?.unbind()
     }
 
     private fun capabilities(
@@ -718,64 +693,19 @@ class CameraBinder(
     }
 
     private fun startRollingRecording() {
-        val activeRecorder = recorder ?: return
-        if (!livePhotoAvailable || activeRecording != null || pendingCapture != null) return
-        val directory = File(context.cacheDir, "motion-recordings")
-        val file = runCatching {
-            check(directory.exists() || directory.mkdirs()) { "cannot create Motion Photo directory" }
-            MotionTemporaryPolicy.expired(directory.listFiles()?.toList().orEmpty(), System.currentTimeMillis())
-                .forEach { it.delete() }
-            File.createTempFile("motion-", ".mp4", directory)
-        }.getOrElse {
-            downgradeLive("无法创建 Live 临时文件，已回退普通照片")
-            return
-        }
-        activeVideoFile = file
-        val token = recordingSession.begin()
-        try {
-            val options = FileOutputOptions.Builder(file)
-                .setFileSizeLimit(MotionTemporaryPolicy.MAX_RECORDING_BYTES)
-                .setDurationLimitMillis(MotionTemporaryPolicy.MAX_RECORDING_DURATION_MS)
-                .build()
-            // Deliberately do not call withAudioEnabled(): this recording has no audio track and needs no permission.
-            activeRecording = activeRecorder.prepareRecording(context, options).start(mainExecutor) { event ->
-                onVideoRecordEvent(token, file, event)
-            }
-        } catch (error: Throwable) {
-            file.delete()
-            activeVideoFile = null
-            activeRecording = null
-            downgradeLive("视频编码器启动失败，已回退普通照片")
-        }
+        if (!livePhotoAvailable) return
+        liveRecording.start(blocked = pendingCapture != null)
     }
 
-    private fun onVideoRecordEvent(token: Long, file: File, event: VideoRecordEvent) {
-        if (!recordingSession.owns(token)) {
-            if (event is VideoRecordEvent.Finalize) file.delete()
-            return
-        }
-        if (event is VideoRecordEvent.Start) {
-            recordingSession.started(token, SystemClock.elapsedRealtime())
-            return
-        }
-        if (event !is VideoRecordEvent.Finalize) return
-        if (!recordingSession.finish(token)) return
-        val durationUs = event.recordingStats.recordedDurationNanos / 1_000L
-        activeRecording = null
-        activeVideoFile = null
+    private fun onLiveRecordingFinalized(file: File, durationUs: Long, error: Throwable?) {
         val pending = pendingCapture
-        val limitReached = event.error == VideoRecordEvent.Finalize.ERROR_DURATION_LIMIT_REACHED ||
-            event.error == VideoRecordEvent.Finalize.ERROR_FILE_SIZE_LIMIT_REACHED
         when {
             pending?.spec?.livePhotoRequested == true && !pending.coordinator.snapshot.motionPhotoFallback -> {
-                val error = if (event.hasError() && !limitReached) {
-                    event.cause ?: IOException("Live 编码结束错误：${event.error}")
-                } else null
                 finalizeLiveCapture(pending, file, durationUs, error)
             }
             else -> {
                 file.delete()
-                if (event.hasError() && !limitReached) {
+                if (error != null) {
                     downgradeLive("Live 编码中断，已回退普通照片")
                 } else if (livePhotoAvailable) {
                     startRollingRecording()
@@ -831,13 +761,8 @@ class CameraBinder(
     }
 
     private fun stopRollingRecording(deleteFile: Boolean) {
-        recordingSession.invalidate()
         if (deleteFile) livePhotoAvailable = false
-        val recording = activeRecording
-        activeRecording = null
-        runCatching { recording?.stop() }
-        if (recording == null && deleteFile) activeVideoFile?.delete()
-        activeVideoFile = null
+        liveRecording.stop(deleteFile)
     }
 
     private fun downgradeLive(reason: String) {
@@ -1128,325 +1053,6 @@ class CameraBinder(
         mainExecutor.execute { pending.onSaveProgress(pending.coordinator.snapshot) }
     }
 
-    private fun recoverInterruptedSaves() {
-        val resolver = context.contentResolver
-        val motionDirectory = File(context.cacheDir, "motion-recordings")
-        MotionTemporaryPolicy.expired(motionDirectory.listFiles()?.toList().orEmpty(), System.currentTimeMillis())
-            .forEach(File::delete)
-        journalStore.readAll().forEach { originalRecord ->
-            var record = originalRecord
-            var recoveryStage: SaveStage? = null
-            runCatching {
-                val source = File(record.sourcePath)
-                val packaged = record.packagedPath?.let(::File)?.takeIf(File::isFile)
-                val primary = packaged ?: source.takeIf(File::isFile)
-                if (SaveStage.COMPLETE.name in record.completedStages) {
-                    cleanupRecoveredRecord(record)
-                    journalStore.delete(record)
-                    return@runCatching
-                }
-                val motionPhoto = record.motionPhotoRequested && !record.motionPhotoFallback && packaged != null
-                if (
-                    record.originalUri != null &&
-                    !record.verifiedAssetStages.containsAssetStage(
-                        PublishedAssetKind.ORIGINAL,
-                        AssetPublishStage.VERIFY_PUBLISHED,
-                    )
-                ) {
-                    recoveryStage = SaveStage.ORIGINAL_PUBLISH
-                    val publishedUri = Uri.parse(record.originalUri)
-                    runCatching {
-                        PublishedAssetVerifier.verifyPublished(
-                            resolver,
-                            publishedUri,
-                            record.displayName,
-                            CaptureSaver.RELATIVE_DIR,
-                            motionPhoto,
-                        )
-                    }.onSuccess {
-                        record = record.copy(
-                            completedStages = record.completedStages + SaveStage.ORIGINAL_PUBLISH.name,
-                            verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
-                                PublishedAssetKind.ORIGINAL,
-                                AssetPublishStage.VERIFY_PUBLISHED,
-                            ),
-                        )
-                        journalStore.write(record)
-                    }.onFailure {
-                        CaptureSaver.deleteQuietly(resolver, publishedUri)
-                        record = record.copy(
-                            originalUri = null,
-                            completedStages = record.completedStages - SaveStage.ORIGINAL_PUBLISH.name,
-                            verifiedAssetStages = record.verifiedAssetStages.withoutAssetStages(PublishedAssetKind.ORIGINAL),
-                        )
-                        journalStore.write(record)
-                    }
-                }
-                if (record.originalUri == null) {
-                    recoveryStage = SaveStage.ORIGINAL_PUBLISH
-                    if (primary == null) {
-                        CaptureSaver.deleteQuietly(resolver, record.pendingUri?.let(Uri::parse))
-                        CaptureSaver.deleteQuietly(resolver, record.derivativePendingUri?.let(Uri::parse))
-                        cleanupRecoveredRecord(record)
-                        journalStore.delete(record)
-                        return@runCatching
-                    }
-                    val stalePending = record.pendingUri?.let(Uri::parse)
-                    val resumed = stalePending?.let { pendingUri ->
-                        runCatching {
-                            CaptureSaver.resumePending(
-                                resolver,
-                                pendingUri,
-                                primary,
-                                record.displayName,
-                                motionPhoto = motionPhoto,
-                                pendingAlreadyVerified = record.verifiedAssetStages.containsAssetStage(
-                                    PublishedAssetKind.ORIGINAL,
-                                    AssetPublishStage.VERIFY_PENDING,
-                                ),
-                                onAssetStage = { stage ->
-                                    record = record.copy(
-                                        verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
-                                            PublishedAssetKind.ORIGINAL,
-                                            stage,
-                                        ),
-                                    )
-                                    journalStore.write(record)
-                                },
-                            )
-                        }.onFailure {
-                            CaptureSaver.deleteQuietly(resolver, pendingUri)
-                            record = record.copy(pendingUri = null)
-                            journalStore.write(record)
-                        }.getOrNull()
-                    }
-                    val uri = resumed ?: CaptureSaver.publish(
-                        resolver,
-                        primary,
-                        record.displayName,
-                        record.takenAtMillis,
-                        motionPhoto = motionPhoto,
-                        onAssetStage = { stage ->
-                            record = record.copy(
-                                verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
-                                    PublishedAssetKind.ORIGINAL,
-                                    stage,
-                                ),
-                            )
-                            journalStore.write(record)
-                        },
-                        onPendingCreated = { pendingUri ->
-                            record = record.copy(pendingUri = pendingUri.toString())
-                            journalStore.write(record)
-                        },
-                    )
-                    record = record.copy(
-                        pendingUri = null,
-                        originalUri = uri.toString(),
-                        completedStages = record.completedStages + SaveStage.ORIGINAL_PUBLISH.name,
-                        verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
-                            PublishedAssetKind.ORIGINAL,
-                            AssetPublishStage.VERIFY_PUBLISHED,
-                        ),
-                        failedStage = null,
-                        error = null,
-                    )
-                    journalStore.write(record)
-                }
-                if (SaveStage.RECIPE_WRITE.name !in record.completedStages) {
-                    recoveryStage = SaveStage.RECIPE_WRITE
-                    val style = runCatching { CreativeStyle.valueOf(record.style) }.getOrDefault(CreativeStyle.ORIGINAL)
-                    val edit = EditAdjustment(
-                        exposureStops = record.exposureStops,
-                        contrast = record.contrast,
-                        saturation = record.saturation,
-                        temperature = record.temperature,
-                        tint = record.tint,
-                        fade = record.fade,
-                        styleStrength = record.styleStrength,
-                    )
-                    recipeStore.write(
-                        EditRecipe.create(
-                            CaptureId(record.captureId),
-                            record.sequence,
-                            record.takenAtMillis,
-                            style,
-                            edit,
-                            record.motionPhotoRequested && !record.motionPhotoFallback && packaged != null,
-                            BeautyPreset.requireSupported(record.beautyPreset, record.beautyEngineVersion),
-                            record.beautyEngineVersion,
-                        ),
-                    )
-                    record = record.copy(completedStages = record.completedStages + SaveStage.RECIPE_WRITE.name)
-                    journalStore.write(record)
-                }
-                if (
-                    record.derivativeRequested &&
-                    record.derivativeUri != null &&
-                    !record.verifiedAssetStages.containsAssetStage(
-                        PublishedAssetKind.DERIVATIVE,
-                        AssetPublishStage.VERIFY_PUBLISHED,
-                    )
-                ) {
-                    recoveryStage = SaveStage.DERIVATIVE_PUBLISH
-                    val publishedUri = Uri.parse(record.derivativeUri)
-                    val displayName = CaptureIdentity.displayName(
-                        CaptureId(record.captureId),
-                        CaptureAssetKind.EFFECT,
-                        record.sequence,
-                        record.takenAtMillis,
-                    )
-                    runCatching {
-                        PublishedAssetVerifier.verifyPublished(
-                            resolver,
-                            publishedUri,
-                            displayName,
-                            CaptureSaver.RELATIVE_DIR,
-                            motionPhoto = false,
-                        )
-                    }.onSuccess {
-                        record = record.copy(
-                            completedStages = record.completedStages + SaveStage.DERIVATIVE_PUBLISH.name,
-                            verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
-                                PublishedAssetKind.DERIVATIVE,
-                                AssetPublishStage.VERIFY_PUBLISHED,
-                            ),
-                        )
-                        journalStore.write(record)
-                    }.onFailure {
-                        CaptureSaver.deleteQuietly(resolver, publishedUri)
-                        record = record.copy(
-                            derivativeUri = null,
-                            completedStages = record.completedStages - SaveStage.DERIVATIVE_PUBLISH.name,
-                            verifiedAssetStages = record.verifiedAssetStages.withoutAssetStages(PublishedAssetKind.DERIVATIVE),
-                        )
-                        journalStore.write(record)
-                    }
-                }
-                if (record.derivativeRequested && record.derivativeUri == null && !source.isFile) {
-                    recoveryStage = SaveStage.DERIVATIVE_GENERATE
-                    record = record.copy(
-                        failedStage = SaveStage.DERIVATIVE_GENERATE.name,
-                        error = "派生图源文件已丢失；原片和配方已保留，请从原片重新另存效果图",
-                    )
-                    journalStore.write(record)
-                    return@runCatching
-                }
-                if (record.derivativeRequested && record.derivativeUri == null) {
-                    recoveryStage = SaveStage.DERIVATIVE_GENERATE
-                    val style = runCatching { CreativeStyle.valueOf(record.style) }.getOrDefault(CreativeStyle.ORIGINAL)
-                    val quality = runCatching { DerivativeQuality.valueOf(record.derivativeQuality) }.getOrDefault(DerivativeQuality.FULL)
-                    val edit = EditAdjustment(
-                        record.exposureStops,
-                        record.contrast,
-                        record.saturation,
-                        record.temperature,
-                        record.tint,
-                        record.fade,
-                        record.styleStrength,
-                    )
-                    val derivative = record.derivativePath?.let(::File)?.takeIf(File::isFile)
-                        ?: creativeProcessor.process(source, style, edit, quality,
-                            beautyPreset = BeautyPreset.requireSupported(record.beautyPreset, record.beautyEngineVersion)).file
-                    record = record.copy(
-                        derivativePath = derivative.absolutePath,
-                        completedStages = record.completedStages + SaveStage.DERIVATIVE_GENERATE.name,
-                    )
-                    journalStore.write(record)
-                    recoveryStage = SaveStage.DERIVATIVE_PUBLISH
-                    val derivativeUri = record.derivativePendingUri?.let(Uri::parse)?.let { pendingUri ->
-                        CaptureSaver.resumePending(
-                            resolver,
-                            pendingUri,
-                            derivative,
-                            CaptureIdentity.displayName(
-                                CaptureId(record.captureId),
-                                CaptureAssetKind.EFFECT,
-                                record.sequence,
-                                record.takenAtMillis,
-                            ),
-                            pendingAlreadyVerified = record.verifiedAssetStages.containsAssetStage(
-                                PublishedAssetKind.DERIVATIVE,
-                                AssetPublishStage.VERIFY_PENDING,
-                            ),
-                            onAssetStage = { stage ->
-                                record = record.copy(
-                                    verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
-                                        PublishedAssetKind.DERIVATIVE,
-                                        stage,
-                                    ),
-                                )
-                                journalStore.write(record)
-                            },
-                        )
-                    } ?: CaptureSaver.publish(
-                        resolver,
-                        derivative,
-                        CaptureIdentity.displayName(
-                            CaptureId(record.captureId),
-                            CaptureAssetKind.EFFECT,
-                            record.sequence,
-                            record.takenAtMillis,
-                        ),
-                        record.takenAtMillis,
-                        onAssetStage = { stage ->
-                            record = record.copy(
-                                verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
-                                    PublishedAssetKind.DERIVATIVE,
-                                    stage,
-                                ),
-                            )
-                            journalStore.write(record)
-                        },
-                        onPendingCreated = { pendingUri ->
-                            record = record.copy(derivativePendingUri = pendingUri.toString())
-                            journalStore.write(record)
-                        },
-                    )
-                    derivative.delete()
-                    record = record.copy(
-                        derivativePendingUri = null,
-                        derivativeUri = derivativeUri.toString(),
-                        derivativePath = null,
-                        completedStages = record.completedStages + SaveStage.DERIVATIVE_PUBLISH.name,
-                        verifiedAssetStages = record.verifiedAssetStages + assetStageKey(
-                            PublishedAssetKind.DERIVATIVE,
-                            AssetPublishStage.VERIFY_PUBLISHED,
-                        ),
-                    )
-                    journalStore.write(record)
-                }
-                recoveryStage = SaveStage.COMPLETE
-                record = record.copy(completedStages = record.completedStages + SaveStage.COMPLETE.name)
-                journalStore.write(record)
-                cleanupRecoveredRecord(record)
-                journalStore.delete(record)
-            }.onFailure { error ->
-                runCatching {
-                    if (recoveryStage == SaveStage.ORIGINAL_PUBLISH && record.originalUri == null) {
-                        CaptureSaver.deleteQuietly(resolver, record.pendingUri?.let(Uri::parse))
-                        record = record.copy(pendingUri = null)
-                    }
-                    if (recoveryStage == SaveStage.DERIVATIVE_PUBLISH && record.derivativeUri == null) {
-                        CaptureSaver.deleteQuietly(resolver, record.derivativePendingUri?.let(Uri::parse))
-                        record = record.copy(derivativePendingUri = null)
-                    }
-                    journalStore.write(
-                        record.copy(
-                            failedStage = recoveryStage?.name,
-                            error = error.message ?: "恢复保存失败",
-                        ),
-                    )
-                }
-            }
-        }
-    }
-
-    private fun cleanupRecoveredRecord(record: SaveJournal) {
-        listOfNotNull(record.sourcePath, record.motionPath, record.packagedPath, record.derivativePath)
-            .map(::File)
-            .forEach(File::delete)
-    }
 
     private companion object {
         const val MIN_ZOOM_GESTURE_DELTA = 0.005f
@@ -1459,20 +1065,7 @@ class CameraBinder(
 
 }
 
-internal enum class LiveVideoTier {
-    HD,
-    SD,
-}
-
-internal val LIVE_VIDEO_TIER_FALLBACK_ORDER: List<LiveVideoTier> =
-    listOf(LiveVideoTier.HD, LiveVideoTier.SD)
-
 internal fun stillCaptureOutputFormat(): Int = ImageCapture.OUTPUT_FORMAT_JPEG
-
-private fun LiveVideoTier.toCameraXQuality(): Quality = when (this) {
-    LiveVideoTier.HD -> Quality.HD
-    LiveVideoTier.SD -> Quality.SD
-}
 
 internal fun <T> firstBindableLiveCandidate(
     candidates: List<T>,

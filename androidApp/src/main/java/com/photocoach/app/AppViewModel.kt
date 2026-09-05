@@ -20,7 +20,6 @@ import com.photocoach.app.analysis.OverlayGeometry
 import com.photocoach.app.camera.FlashSetting
 import com.photocoach.app.camera.CameraCapabilities
 import com.photocoach.app.camera.CameraModePreference
-import com.photocoach.app.camera.CameraSettingsStore
 import com.photocoach.app.camera.CameraUserSettings
 import com.photocoach.app.camera.CaptureAspectRatio
 import com.photocoach.app.camera.CapturePriority
@@ -49,7 +48,6 @@ import com.photocoach.app.creative.ParameterSuggestion
 import com.photocoach.app.creative.PhotoQualityScore
 import com.photocoach.app.creative.CreativeSceneTag
 import com.photocoach.app.creative.StyleDiscovery
-import com.photocoach.app.creative.StylePreferenceStore
 import com.photocoach.app.creative.StyleProfiles
 import com.photocoach.app.creative.StyleRecommendationEngine
 import com.photocoach.app.creative.StyleRecommendationInput
@@ -92,10 +90,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val engine = CoachEngine.loadDefault()
     private val guidance = GuidanceSession()
     private val eventLogger = ResearchEventLogger(File(application.filesDir, "research/p-minus-one-events.jsonl"))
-    private val settingsStore = CameraSettingsStore(application)
-    private val stylePreferenceStore = StylePreferenceStore(application)
-    private val initialSettings = settingsStore.load()
-    private val initialStylePreferences = stylePreferenceStore.load()
+    private val preferences = ViewfinderPreferenceController(application)
+    private val initialSettings = preferences.initialCameraSettings
+    private val initialStylePreferences = preferences.initialStylePreferences
     private val sessionStartedAtMs = now()
     private val sensorManager = application.getSystemService(SensorManager::class.java)
     private val gravity = FloatArray(3)
@@ -473,7 +470,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun resetCameraSettings() {
-        val defaults = settingsStore.reset()
+        val defaults = preferences.resetCameraSettings()
         if (!defaults.subjectCaptionsEnabled) guidance.clearRetainedSubjectCue()
         _ui.update {
             it.copy(
@@ -501,11 +498,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         emitGuidance()
     }
 
-    fun cameraSettings(): CameraUserSettings = _ui.value.toCameraUserSettings()
+    fun cameraSettings(): CameraUserSettings = preferences.cameraSettings(_ui.value)
 
     fun setCreativeStyle(style: CreativeStyle) {
         if (_ui.value.guidance.stage is GuidanceStage.Capturing) return
-        val preferences = stylePreferenceStore.recordUse(style)
+        val updatedPreferences = preferences.recordStyleUse(style)
         _ui.update { state ->
             val result = state.creativeResult
             val suggested = state.styleDiscovery.recommendations.firstOrNull { it.style == style }?.suggestedStrength
@@ -513,8 +510,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             state.copy(
                 creativeStyle = style,
                 creativeStyleStrength = suggested,
-                styleRecent = preferences.recent,
-                styleFavorites = preferences.favorites,
+                styleRecent = updatedPreferences.recent,
+                styleFavorites = updatedPreferences.favorites,
                 creativeResult = result?.copy(message = null),
                 controlMessage = "已选择${style.label}，建议强度 ${(suggested * 100).roundToInt()}%；原片仍会保留",
             )
@@ -553,8 +550,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val style = _ui.value.creativeStyle
         if (style == CreativeStyle.ORIGINAL) { showControlMessage("原图始终排第一，无需收藏"); return }
         val favorite = style !in _ui.value.styleFavorites
-        val preferences = stylePreferenceStore.setFavorite(style, favorite)
-        _ui.update { it.copy(styleFavorites = preferences.favorites, styleRecent = preferences.recent,
+        val updatedPreferences = preferences.setStyleFavorite(style, favorite)
+        _ui.update { it.copy(styleFavorites = updatedPreferences.favorites, styleRecent = updatedPreferences.recent,
             controlMessage = if (favorite) "已收藏${style.label}" else "已取消收藏${style.label}") }
     }
 
@@ -1151,7 +1148,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun persistSettings() {
-        settingsStore.save(_ui.value.toCameraUserSettings())
+        preferences.save(_ui.value)
     }
 
     private fun stageName(stage: GuidanceStage): String = when (stage) {
@@ -1191,23 +1188,6 @@ private fun PoseCategory.label(): String = when (this) {
 private data class AnalyzedFrame(
     val signals: Signals,
     val overlay: OverlayGeometry,
-)
-
-private fun ViewfinderUi.toCameraUserSettings(): CameraUserSettings = CameraUserSettings(
-    voiceEnabled = voiceEnabled,
-    subjectCaptionsEnabled = subjectCaptionsEnabled,
-    gridEnabled = gridEnabled,
-    levelEnabled = levelEnabled,
-    timer = captureTimer,
-    aspectRatio = aspectRatio,
-    capturePriority = capturePriority,
-    modePreference = modePreference,
-    creativeStyle = creativeStyle,
-    threeShotBurstEnabled = threeShotBurstEnabled,
-    saveStrategy = saveStrategy,
-    derivativeQuality = derivativeQuality,
-    livePhotoEnabled = livePhotoEnabled,
-    beautyPreset = beautyPreset,
 )
 
 private fun SaveStage.label(): String = when (this) {
