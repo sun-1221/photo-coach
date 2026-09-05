@@ -1,6 +1,6 @@
 # 保存恢复与紧凑横屏修复（2026-09-05）
 
-基线：359c9b39d926340159ffcc54fde5153f9802f0ab；本次修改在本地 checkout，未提交、推送或创建 worktree。
+基线：359c9b39d926340159ffcc54fde5153f9802f0ab；本次修改直接在已保存项目的本地 checkout 完成，未创建 worktree。
 
 ## Changed / Delivery
 
