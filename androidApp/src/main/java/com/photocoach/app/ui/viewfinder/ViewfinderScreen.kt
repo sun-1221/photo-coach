@@ -189,6 +189,7 @@ fun ViewfinderScreen(
                     onApplyParameterSuggestion = onApplyParameterSuggestion,
                     onOpenCreativeResult = onOpenCreativeResult,
                     modifier = Modifier.width(landscapePanelWidth).fillMaxSize().statusBarsPadding(),
+                    compactRail = landscapePanelWidth < 320.dp,
                 )
             }
         } else {
@@ -560,6 +561,7 @@ private fun OperationPanel(
     onApplyParameterSuggestion: (ParameterSuggestion) -> Unit,
     onOpenCreativeResult: () -> Unit,
     modifier: Modifier,
+    compactRail: Boolean = false,
 ) {
     val haptic = LocalHapticFeedback.current
     val colors = PhotoCoachTokens.colors
@@ -692,7 +694,7 @@ private fun OperationPanel(
                 }
             }
             Row(
-                modifier = Modifier.weight(1f),
+                modifier = if (compactRail) Modifier.width(116.dp) else Modifier.weight(1f),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -1461,7 +1463,8 @@ private fun promptSummary(ui: ViewfinderUi): String = when {
 private const val FOCUS_CONTROLS_DURATION_MS = 4_000L
 private const val CONTROL_MESSAGE_DURATION_MS = 2_000L
 internal fun adaptiveLandscapePanelWidth(windowWidth: Dp): Dp {
-    val minimumControlsWidth = 252.dp
+    // 24dp padding + 48dp focal + 64dp shutter + 116dp actions, with pixel-rounding headroom.
+    val minimumControlsWidth = 256.dp
     val preferred = windowWidth * 0.36f
     val maximum = 360.dp
     val maximumWhilePreservingPreview = (windowWidth - 320.dp).coerceAtLeast(minimumControlsWidth)

@@ -431,15 +431,18 @@ class MainActivity : ComponentActivity() {
             spec = spec,
             onSaveProgress = viewModel::onSaveProgress,
             onSaved = { photo ->
-                if (viewModel.onPhotoCaptured(photo)) captureNextShot() else applyDeferredThermalRebind()
+                if (viewModel.onPhotoCaptured(photo)) {
+                    if (isDestroyed) viewModel.onSaveFailed(IllegalStateException("相机页面已关闭，连拍已停止；已拍原片已保留"), retryAvailable = false)
+                    else captureNextShot()
+                } else if (!isDestroyed) applyDeferredThermalRebind()
             },
             onSaveError = {
-                viewModel.onSaveFailed(it, retryAvailable = true)
-                applyDeferredThermalRebind()
+                viewModel.onSaveFailed(it, retryAvailable = !isDestroyed)
+                if (!isDestroyed) applyDeferredThermalRebind()
             },
             onCaptureError = {
                 viewModel.onSaveFailed(it, retryAvailable = false)
-                applyDeferredThermalRebind()
+                if (!isDestroyed) applyDeferredThermalRebind()
             },
         )
     }
@@ -448,11 +451,14 @@ class MainActivity : ComponentActivity() {
         if (!viewModel.beginRetrySave()) return
         val started = camera.retrySave(
             onSaved = { photo ->
-                if (viewModel.onPhotoCaptured(photo)) captureNextShot() else applyDeferredThermalRebind()
+                if (viewModel.onPhotoCaptured(photo)) {
+                    if (isDestroyed) viewModel.onSaveFailed(IllegalStateException("相机页面已关闭，连拍已停止；已拍原片已保留"), retryAvailable = false)
+                    else captureNextShot()
+                } else if (!isDestroyed) applyDeferredThermalRebind()
             },
             onSaveError = {
-                viewModel.onSaveFailed(it, retryAvailable = true)
-                applyDeferredThermalRebind()
+                viewModel.onSaveFailed(it, retryAvailable = !isDestroyed)
+                if (!isDestroyed) applyDeferredThermalRebind()
             },
         )
         if (!started) {

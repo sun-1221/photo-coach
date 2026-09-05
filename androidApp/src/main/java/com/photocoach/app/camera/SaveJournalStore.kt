@@ -61,6 +61,13 @@ data class SaveJournal(
 class SaveJournalStore(private val directory: File) {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
 
+    internal fun transactionKey(captureId: String, sequence: Int): String =
+        "${directory.absolutePath}/$captureId/$sequence"
+
+    internal fun read(record: SaveJournal): SaveJournal? = fileFor(record).takeIf(File::isFile)?.let {
+        json.decodeFromString<SaveJournal>(it.readText(Charsets.UTF_8))
+    }
+
     fun write(record: SaveJournal): File {
         check(directory.exists() || directory.mkdirs()) { "cannot create save journal directory" }
         val target = fileFor(record)

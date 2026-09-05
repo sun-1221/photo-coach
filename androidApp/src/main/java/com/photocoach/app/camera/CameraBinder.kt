@@ -114,6 +114,9 @@ class CameraBinder(
     private var previewView: PreviewView? = null
     private var pendingCapture: PendingCapture? = null
     private var captureInProgress = false
+    private var released = false
+    private var saveWorkInProgress = false
+    private var captureLease: SaveTransactionRegistry.Lease? = null
     private var smoothZoomRatio = 1f
     private val prepareMutex = Mutex()
     @Volatile private var thermalLevel: ThermalLevel = ThermalLevel.UNKNOWN
@@ -152,6 +155,7 @@ class CameraBinder(
         onBeautyFallback: (String) -> Unit = {},
         onBeautyPreviewState: (BeautyPreviewState) -> Unit = {},
     ): CameraCapabilities? {
+        if (released) return null
         val cameraProvider = provider ?: run {
             onError(IllegalStateException("camera provider missing"))
             return null
@@ -471,7 +475,7 @@ class CameraBinder(
         onCaptureError: (Throwable) -> Unit,
     ) {
         val capture = imageCapture
-        if (capture == null || captureInProgress) {
+        if (released || capture == null || captureInProgress || pendingCapture != null) {
             onCaptureError(IllegalStateException("camera is not ready"))
             return
         }
@@ -491,81 +495,97 @@ class CameraBinder(
             return
         }
         val shutterElapsedMs = SystemClock.elapsedRealtime()
+        captureLease = SaveTransactionRegistry.tryAcquire(journalStore.transactionKey(spec.captureId.value, spec.sequence))
+        if (captureLease == null) {
+            captureInProgress = false
+            file.delete()
+            onCaptureError(IllegalStateException("照片正在由另一个保存任务处理"))
+            return
+        }
         val recordingAtShutter = liveRecording.marker()
         val recordingStartedAtShutterMs = recordingAtShutter?.startedElapsedMs
         val liveWindowReadyAtShutter = recordingStartedAtShutterMs != null &&
             MotionTemporaryPolicy.hasFullShutterWindow(shutterElapsedMs - recordingStartedAtShutterMs)
-        capture.takePicture(
-            ImageCapture.OutputFileOptions.Builder(file).build(),
-            mainExecutor,
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                    val liveWillPackage = spec.livePhotoRequested &&
-                        livePhotoAvailable &&
-                        liveWindowReadyAtShutter &&
-                        liveRecording.isCurrent(recordingAtShutter)
-                    val liveCaptureFallbackReason = when {
-                        !spec.livePhotoRequested -> null
-                        !livePhotoAvailable -> liveFallbackReason ?: "Live 不可用，已保存普通照片"
-                        !liveWindowReadyAtShutter -> "Live 缓冲窗口不足，已保存普通照片"
-                        !liveRecording.isCurrent(recordingAtShutter) -> "Live 录制分段已切换，已保存普通照片"
-                        else -> null
-                    }
-                    pendingCapture = PendingCapture(
-                        file = file,
-                        spec = spec.copy(livePhotoRequested = liveWillPackage),
-                        onSaved = onSaved,
-                        onSaveError = onSaveError,
-                        onSaveProgress = onSaveProgress,
-                        shutterElapsedMs = shutterElapsedMs,
-                        recordingStartedElapsedMs = recordingStartedAtShutterMs ?: shutterElapsedMs,
-                    )
-                    runCatching { writeJournal(requireNotNull(pendingCapture)) }.onFailure { error ->
-                        captureInProgress = false
-                        onSaveError(IOException("无法建立异常恢复记录；临时原片仍可重试", error))
-                        return
-                    }
-                    if (liveWillPackage) {
-                        val pending = requireNotNull(pendingCapture)
-                        val available = StatFs(context.cacheDir.absolutePath).availableBytes
-                        val liveEstimate = SpaceEstimate(
-                            sourceBytes = file.length() + MotionTemporaryPolicy.MAX_RECORDING_BYTES,
-                            processingPeakBytes = file.length() + MotionTemporaryPolicy.MAX_RECORDING_BYTES,
-                            derivativeBytes = 0L,
+        try {
+            capture.takePicture(
+                ImageCapture.OutputFileOptions.Builder(file).build(),
+                mainExecutor,
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                        val liveWillPackage = spec.livePhotoRequested &&
+                            livePhotoAvailable &&
+                            liveWindowReadyAtShutter &&
+                            liveRecording.isCurrent(recordingAtShutter)
+                        val liveCaptureFallbackReason = when {
+                            !spec.livePhotoRequested -> null
+                            !livePhotoAvailable -> liveFallbackReason ?: "Live 不可用，已保存普通照片"
+                            !liveWindowReadyAtShutter -> "Live 缓冲窗口不足，已保存普通照片"
+                            !liveRecording.isCurrent(recordingAtShutter) -> "Live 录制分段已切换，已保存普通照片"
+                            else -> null
+                        }
+                        pendingCapture = PendingCapture(
+                            file = file,
+                            spec = spec.copy(livePhotoRequested = liveWillPackage),
+                            onSaved = onSaved,
+                            onSaveError = onSaveError,
+                            onSaveProgress = onSaveProgress,
+                            shutterElapsedMs = shutterElapsedMs,
+                            recordingStartedElapsedMs = recordingStartedAtShutterMs ?: shutterElapsedMs,
                         )
-                        if (liveEstimate.fits(available)) {
-                            pending.coordinator.complete(SaveStage.SPACE_CHECK)
-                            writeJournal(pending)
-                            liveRecording.stopAfter(
-                                requireNotNull(recordingAtShutter),
-                                LIVE_POST_SHUTTER_MS - (SystemClock.elapsedRealtime() - shutterElapsedMs),
+                        runCatching { writeJournal(requireNotNull(pendingCapture)) }.onFailure { error ->
+                            captureInProgress = false
+                            settleCaptureOwnership()
+                            onSaveError(IOException("无法建立异常恢复记录；临时原片仍可重试", error))
+                            return
+                        }
+                        if (liveWillPackage) {
+                            val pending = requireNotNull(pendingCapture)
+                            val available = StatFs(context.cacheDir.absolutePath).availableBytes
+                            val liveEstimate = SpaceEstimate(
+                                sourceBytes = file.length() + MotionTemporaryPolicy.MAX_RECORDING_BYTES,
+                                processingPeakBytes = file.length() + MotionTemporaryPolicy.MAX_RECORDING_BYTES,
+                                derivativeBytes = 0L,
                             )
+                            if (liveEstimate.fits(available)) {
+                                pending.coordinator.complete(SaveStage.SPACE_CHECK)
+                                writeJournal(pending)
+                                liveRecording.stopAfter(
+                                    requireNotNull(recordingAtShutter),
+                                    LIVE_POST_SHUTTER_MS - (SystemClock.elapsedRealtime() - shutterElapsedMs),
+                                )
+                            } else {
+                                pending.coordinator.complete(SaveStage.SPACE_CHECK)
+                                pending.coordinator.fallbackFromMotionPhoto("Live 临时空间不足")
+                                pending.warnings += "Live 空间不足，已降级普通照片"
+                                writeJournal(pending)
+                                recordingAtShutter?.let { liveRecording.stopAfter(it, 0L) }
+                                publishPending(onSaved, onSaveError)
+                            }
                         } else {
-                            pending.coordinator.complete(SaveStage.SPACE_CHECK)
-                            pending.coordinator.fallbackFromMotionPhoto("Live 临时空间不足")
-                            pending.warnings += "Live 空间不足，已降级普通照片"
-                            writeJournal(pending)
-                            recordingAtShutter?.let { liveRecording.stopAfter(it, 0L) }
+                            liveCaptureFallbackReason?.let { pendingCapture?.warnings?.add(it) }
                             publishPending(onSaved, onSaveError)
                         }
-                    } else {
-                        liveCaptureFallbackReason?.let { pendingCapture?.warnings?.add(it) }
-                        publishPending(onSaved, onSaveError)
                     }
-                }
 
-                override fun onError(exception: ImageCaptureException) {
-                    captureInProgress = false
-                    file.delete()
-                    if (livePhotoAvailable && !liveRecording.isRecording) startRollingRecording()
-                    onCaptureError(exception)
-                }
-            },
-        )
+                    override fun onError(exception: ImageCaptureException) {
+                        captureInProgress = false
+                        file.delete()
+                        settleCaptureOwnership()
+                        if (livePhotoAvailable && !liveRecording.isRecording) startRollingRecording()
+                        onCaptureError(exception)
+                    }
+                },
+            )
+        } catch (error: Exception) {
+            captureInProgress = false
+            file.delete()
+            settleCaptureOwnership()
+            onCaptureError(error)
+        }
     }
 
     fun retrySave(onSaved: (CapturedPhoto) -> Unit, onSaveError: (Throwable) -> Unit): Boolean {
-        if (pendingCapture?.file?.isFile != true || captureInProgress) return false
+        if (released || pendingCapture?.file?.isFile != true || captureInProgress) return false
         pendingCapture?.let { pending ->
             pending.coordinator.snapshot.failedStage?.name?.let { failed ->
                 pending.stageRetryCounts[failed] = (pending.stageRetryCounts[failed] ?: 0) + 1
@@ -586,6 +606,7 @@ class CameraBinder(
             journalStore.delete(pending.toJournal())
         }
         pendingCapture = null
+        settleCaptureOwnership()
         if (livePhotoAvailable && !liveRecording.isRecording) startRollingRecording()
     }
 
@@ -632,6 +653,7 @@ class CameraBinder(
     }
 
     fun release() {
+        released = true
         stopRollingRecording(deleteFile = true)
         unbindOwnedUseCases()
         beautyEffect?.close()
@@ -639,8 +661,27 @@ class CameraBinder(
         beautyStore = null
         analyzer?.close()
         analysisExecutor.shutdown()
-        saveExecutor.shutdown()
+        val pending = pendingCapture
+        if (pending != null && captureInProgress && !saveWorkInProgress) {
+            // Retiring the recording invalidates Finalize. Preserve its already captured JPEG.
+            if (pending.coordinator.snapshot.nextStage == SaveStage.MOTION_PACKAGE) {
+                pending.coordinator.fallbackFromMotionPhoto("相机会话已结束，保存普通照片")
+                pending.warnings += "Live 会话已结束，已回退普通照片"
+            }
+            publishPending(pending.onSaved, pending.onSaveError)
+        } else if (!captureInProgress) {
+            settleCaptureOwnership()
+        }
+        if (captureLease == null) saveExecutor.shutdown()
         liveRecording.shutdown()
+    }
+
+    private fun settleCaptureOwnership() {
+        if (pendingCapture == null || released) {
+            captureLease?.close()
+            captureLease = null
+        }
+        if (released && captureLease == null) saveExecutor.shutdown()
     }
 
     private fun unbindOwnedUseCases() {
@@ -720,6 +761,7 @@ class CameraBinder(
         durationUs: Long,
         recordingError: Throwable?,
     ) {
+        saveWorkInProgress = true
         saveExecutor.execute {
             val result = runCatching {
                 if (recordingError != null) throw IOException("Live 编码失败", recordingError)
@@ -756,7 +798,10 @@ class CameraBinder(
                 pending.warnings += "Live 打包失败，已可靠降级普通照片"
                 writeJournal(pending)
             }
-            mainExecutor.execute { publishPending(pending.onSaved, pending.onSaveError) }
+            mainExecutor.execute {
+                saveWorkInProgress = false
+                publishPending(pending.onSaved, pending.onSaveError)
+            }
         }
     }
 
@@ -773,15 +818,18 @@ class CameraBinder(
     }
 
     private fun publishPending(onSaved: (CapturedPhoto) -> Unit, onSaveError: (Throwable) -> Unit) {
+        if (saveWorkInProgress) return
         val pending = pendingCapture ?: run {
             captureInProgress = false
             onSaveError(IllegalStateException("pending capture missing"))
             return
         }
+        saveWorkInProgress = true
         saveExecutor.execute {
             val result = runCatching { publishNonDestructive(pending) }
             mainExecutor.execute {
                 captureInProgress = false
+                saveWorkInProgress = false
                 result.onSuccess { photo ->
                     pending.file.delete()
                     pending.motionFile?.delete()
@@ -789,9 +837,11 @@ class CameraBinder(
                     pending.derivativeFile?.delete()
                     journalStore.delete(pending.toJournal())
                     pendingCapture = null
+                    settleCaptureOwnership()
                     onSaved(photo)
                     if (livePhotoAvailable) startRollingRecording()
                 }.onFailure { error ->
+                    settleCaptureOwnership()
                     val originalUri = pending.originalUri
                     onSaveError(
                         if (originalUri != null) PartialSaveException(error.message ?: "后续保存阶段失败", originalUri, error)

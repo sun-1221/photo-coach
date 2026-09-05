@@ -527,9 +527,14 @@ class ViewfinderScreenTest {
 
     @Test
     fun compactLandscapeUsesAdaptiveRailAndKeepsGuidanceSkipAndShutterReachable() {
+        val opened = AtomicReference<String>()
+        val recent = "android.resource://android/drawable/ic_menu_camera"
         render(
-            ui(GuidanceStage.Action(RequiredStep.SHOOTER, shooterCue, 0L)),
+            ui(GuidanceStage.Action(RequiredStep.SHOOTER, shooterCue, 0L)).copy(
+                recentPhoto = recent, focalPresets = listOf(defaultFocal), selectedFocalId = defaultFocal.cameraId,
+            ),
             windowSize = DpSize(400.dp, 300.dp),
+            onOpenRecentPhoto = opened::set,
         )
 
         val root = compose.onRoot().getBoundsInRoot()
@@ -545,6 +550,16 @@ class ViewfinderScreenTest {
         compose.onNodeWithTag("guidance_text").assertIsDisplayed()
         compose.onNodeWithTag("skip").assertIsDisplayed()
         compose.onNodeWithTag("shutter").assertIsDisplayed().assertIsEnabled()
+        val creative = compose.onNodeWithTag("creative_capture_menu").assertIsDisplayed().getBoundsInRoot()
+        val thumbnail = compose.onNodeWithTag("recent_photo").assertIsDisplayed().getBoundsInRoot()
+        val focal = compose.onNodeWithTag("focal_0").assertIsDisplayed().getBoundsInRoot()
+        assertTrue("recent photo lost its touch width: $thumbnail", thumbnail.right - thumbnail.left >= 48.dp)
+        assertTrue("recent photo lost its touch height: $thumbnail", thumbnail.bottom - thumbnail.top >= 48.dp)
+        assertTrue("focal control was squeezed: $focal", focal.right - focal.left >= 48.dp)
+        assertTrue("creative overlaps recent photo", creative.right <= thumbnail.left)
+        assertTrue("recent photo escaped rail", thumbnail.right <= panel.right)
+        compose.onNodeWithTag("recent_photo").performClick()
+        compose.runOnIdle { assertEquals(recent, opened.get()) }
     }
 
     @Test
