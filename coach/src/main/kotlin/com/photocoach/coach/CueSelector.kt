@@ -66,8 +66,8 @@ object CueSelector {
     }
 
     private fun pickLight(catalog: SceneCatalog, signals: Signals): Cue? = when {
-        signals.faceDarkerThanScene || !signals.focusOnFace -> catalog.cue(CueId.FOCUS_FACE)
-        signals.skyOverexposed -> catalog.cue(CueId.LOWER_EXPOSURE)
+        !signals.focusOnFace || (signals.faceDarkerThanScene && !signals.faceMetered) -> catalog.cue(CueId.FOCUS_FACE)
+        signals.skyOverexposed && signals.exposureReductionAllowed && !signals.faceDarkerThanScene -> catalog.cue(CueId.LOWER_EXPOSURE)
         else -> null
     }
 
@@ -95,7 +95,7 @@ object CueSelector {
                 abs(signals.tiltDegrees) > TILT_THRESHOLD -> catalog.cue(CueId.LEVEL_PHONE)
                 else -> null
             },
-            if (signals.skyOverexposed) catalog.cue(CueId.LOWER_EXPOSURE) else null,
+            if (signals.skyOverexposed && signals.exposureReductionAllowed && !signals.faceDarkerThanScene) catalog.cue(CueId.LOWER_EXPOSURE) else null,
         )
         return cues.mapNotNull { sanitize(it, emptyList()) }.distinctBy(Cue::channel).take(2)
     }

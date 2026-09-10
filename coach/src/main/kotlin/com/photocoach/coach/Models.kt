@@ -89,6 +89,33 @@ enum class FocusTarget {
 
 @Serializable
 enum class CueId {
+    @SerialName("p1_motion_burst")
+    P1_MOTION_BURST,
+    @SerialName("p1_frame")
+    P1_FRAME,
+    @SerialName("p1_joints")
+    P1_JOINTS,
+    @SerialName("p1_face_light")
+    P1_FACE_LIGHT,
+    @SerialName("p1_highlights")
+    P1_HIGHLIGHTS,
+    @SerialName("p1_distance")
+    P1_DISTANCE,
+    @SerialName("p1_background")
+    P1_BACKGROUND,
+    @SerialName("p1_night")
+    P1_NIGHT,
+    @SerialName("p1_motion")
+    P1_MOTION,
+    @SerialName("p1_multi_frame")
+    P1_MULTI_FRAME,
+    @SerialName("p1_multi_level")
+    P1_MULTI_LEVEL,
+    @SerialName("p1_multi_highlights")
+    P1_MULTI_HIGHLIGHTS,
+
+    @SerialName("p1_pose_optional")
+    P1_POSE_OPTIONAL,
     @SerialName("find_person")
     FIND_PERSON,
 
@@ -166,6 +193,7 @@ data class Cue(
     val directionGroup: String? = null,
     val direction: Int = 0,
     val critical: Boolean = false,
+    val sourceId: String? = null,
 )
 
 @Serializable
@@ -178,6 +206,10 @@ data class SceneStartParams(
 )
 
 data class Signals(
+    /** All required quality sources are observable; false includes uncalibrated/unknown sources. */
+    val qualityEvidenceComplete: Boolean = false,
+    val qualityObservedAtMs: Map<QualitySource, Long> = emptyMap(),
+    val observedAtMs: Long? = null,
     val faceCount: Int = 0,
     val faceRatio: Float = 0f,
     val faceDarkerThanScene: Boolean = false,
@@ -190,6 +222,8 @@ data class Signals(
     val personCentered: Boolean = false,
     val faceTooLowInFrame: Boolean = false,
     val focusOnFace: Boolean = true,
+    /** A successful explicit face AF/AE request in this photo round; not brightness evidence. */
+    val faceMetered: Boolean = false,
     val faceTurnedAway: Boolean = false,
     val eyesLikelyClosed: Boolean = false,
     val headTiltedBack: Boolean = false,
@@ -197,6 +231,7 @@ data class Signals(
     val shouldersRaised: Boolean = false,
     val handsIdle: Boolean = false,
     val skyOverexposed: Boolean = false,
+    val exposureReductionAllowed: Boolean = true,
     val subjectCutOff: Boolean = false,
     val lensObscured: Boolean = false,
     val faceReliable: Boolean = false,

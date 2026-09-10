@@ -7,9 +7,41 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class GuidanceSessionTest {
+    @Test fun differentLightingTechniquesReplaceTheOldInstructionAfterStability() {
+        val session = readySession()
+        val signals = Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f)
+        val light = PhotoTechniqueEngine.suggest(signals.copy(faceDarkerThanScene = true), TechniqueCapabilities())!!
+        val highlights = PhotoTechniqueEngine.suggest(signals.copy(skyOverexposed = true), TechniqueCapabilities())!!
+        assertTrue(light.cueId != highlights.cueId)
+        fun cue(t: TechniqueSuggestion) = Cue(t.cueId, t.text, t.audience, Channel.LIGHT, priority = 75)
+        stabilize(session, output(listOf(cue(light))), signals)
+        assertEquals(light.text, session.snapshot().currentCue?.text)
+        for (time in listOf(1800L, 2100L, 2400L)) session.onCandidates(output(listOf(cue(highlights))), signals, time)
+        assertEquals(highlights.text, session.snapshot().currentCue?.text)
+        assertEquals("1/2", session.snapshot().stepLabel)
+        assertTrue(session.snapshot().shutterEnabled)
+    }
+
+    @Test
+    fun faceTapCompletesDarkFaceMeteringWithoutClaimingBrightnessImproved() {
+        val session = readySession()
+        val dark = Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f, faceDarkerThanScene = true)
+        val cues = output(listOf(focusFace()))
+        stabilize(session, cues, dark)
+        assertEquals(CueId.FOCUS_FACE, session.snapshot().currentCue?.id)
+        val metered = dark.copy(faceMetered = true)
+        for (time in listOf(1800L, 2100L, 2400L, 2700L)) {
+            session.onCandidates(output(emptyList()), metered, time)
+        }
+        val ready = assertInstanceOf(GuidanceStage.Ready::class.java, session.snapshot().stage)
+        assertFalse(ready.qualityConfirmed)
+        assertEquals(ReadinessIssue.FACE_DARK, ready.readinessIssue)
+        assertTrue(session.snapshot().shutterEnabled)
+    }
+
     @Test
     fun knownDarkFaceOrSubjectMotionDoesNotClaimConfirmedReady() {
-        val good = Signals(faceCount = 1, faceRatio = 0.18f)
+        val good = Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.18f)
         for ((signals, reason) in listOf(
             good.copy(faceDarkerThanScene = true) to ReadinessIssue.FACE_DARK,
             good.copy(subjectMotionHigh = true) to ReadinessIssue.SUBJECT_MOVING,
@@ -27,7 +59,7 @@ class GuidanceSessionTest {
     @Test
     fun readyQualityRefreshesAfterStableImprovementAndDeterioration() {
         val session = readySession()
-        val good = Signals(faceCount = 1, faceRatio = 0.18f)
+        val good = Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.18f)
         session.onCandidates(output(emptyList()), good.copy(handheldStable = false), 100)
         session.tick(1_500)
         val first = assertInstanceOf(GuidanceStage.Ready::class.java, session.snapshot().stage)
@@ -50,7 +82,7 @@ class GuidanceSessionTest {
     @Test
     fun exhaustedAdviceStillExplainsUnresolvedQualityWithoutAddingAStep() {
         val session = readySession()
-        stabilize(session, output(listOf(moveCloser())), Signals(faceCount = 1, faceRatio = 0.04f))
+        stabilize(session, output(listOf(moveCloser())), Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.04f))
         session.tick(200 + GuidanceSession.SHOOTER_TIMEOUT_MS)
         val stage = session.snapshot().stage as GuidanceStage.Ready
         assertEquals(ReadinessIssue.SUBJECT_TOO_SMALL, stage.readinessIssue)
@@ -62,7 +94,7 @@ class GuidanceSessionTest {
     @Test
     fun oneGoodFrameDoesNotEraseTheReadinessReason() {
         val session = readySession()
-        val bad = Signals(faceCount = 1, faceRatio = 0.18f, handheldStable = false)
+        val bad = Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.18f, handheldStable = false)
         session.onCandidates(output(emptyList()), bad, 100)
         session.tick(1_500)
         session.onCandidates(output(emptyList()), bad.copy(handheldStable = true), 1_600)
@@ -75,10 +107,10 @@ class GuidanceSessionTest {
         val session = readySession()
         val output = output(listOf(moveCloser(priority = 100), focusFace(priority = 80), subjectCue()))
 
-        session.onCandidates(output, Signals(faceCount = 1, faceRatio = 0.04f), 10)
-        session.onCandidates(output, Signals(faceCount = 1, faceRatio = 0.04f), 100)
+        session.onCandidates(output, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.18f), 10)
+        session.onCandidates(output, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.18f), 100)
         assertInstanceOf(GuidanceStage.Observing::class.java, session.snapshot().stage)
-        session.onCandidates(output, Signals(faceCount = 1, faceRatio = 0.04f), 200)
+        session.onCandidates(output, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.18f), 200)
 
         assertEquals("1/2", session.snapshot().stepLabel)
         assertEquals(CueId.MOVE_CLOSER, session.snapshot().currentCue?.id)
@@ -100,7 +132,7 @@ class GuidanceSessionTest {
         val noCue = readySession()
         noCue.onCandidates(
             output(emptyList()),
-            Signals(faceCount = 1, faceRatio = CueSelector.CLOSE_UP_MIN_FACE_RATIO),
+            Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = CueSelector.CLOSE_UP_MIN_FACE_RATIO),
             100,
         )
         noCue.tick(GuidanceSession.OBSERVATION_TIMEOUT_MS)
@@ -108,7 +140,7 @@ class GuidanceSessionTest {
         assertTrue(ready.qualityConfirmed)
 
         val action = readySession()
-        stabilize(action, output(listOf(moveCloser())), Signals(faceCount = 1, faceRatio = 0.04f))
+        stabilize(action, output(listOf(moveCloser())), Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.04f))
         action.tick(200 + GuidanceSession.SHOOTER_TIMEOUT_MS)
         assertInstanceOf(GuidanceStage.Ready::class.java, action.snapshot().stage)
     }
@@ -140,15 +172,14 @@ class GuidanceSessionTest {
 
         assertTrue(session.skip(300))
 
-        val ready = assertInstanceOf(GuidanceStage.Ready::class.java, session.snapshot().stage)
-        assertFalse(ready.qualityConfirmed)
+        assertEquals(CueId.FIND_PERSON, session.snapshot().currentCue?.id)
         assertTrue(session.snapshot().shutterEnabled)
     }
 
     @Test
     fun unresolvedQualityCanEndAdviceBudgetWithoutClaimingConfirmedReady() {
         val session = readySession()
-        stabilize(session, output(listOf(moveCloser())), Signals(faceCount = 1, faceRatio = 0.04f))
+        stabilize(session, output(listOf(moveCloser())), Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.04f))
 
         session.tick(200 + GuidanceSession.SHOOTER_TIMEOUT_MS)
 
@@ -161,9 +192,9 @@ class GuidanceSessionTest {
     fun machineReadableImprovementNeedsFiveHundredMillisecondsAndMinimumDisplay() {
         val session = readySession()
         val output = output(listOf(moveCloser()))
-        stabilize(session, output, Signals(faceCount = 1, faceRatio = 0.04f))
+        stabilize(session, output, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.04f))
 
-        session.onCandidates(output, Signals(faceCount = 1, faceRatio = 0.07f), 300)
+        session.onCandidates(output, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.07f), 300)
         session.tick(799)
         assertInstanceOf(GuidanceStage.Action::class.java, session.snapshot().stage)
         session.tick(1_700)
@@ -180,9 +211,9 @@ class GuidanceSessionTest {
             Channel.COMPOSITION,
         )
         val output = output(listOf(cue))
-        stabilize(session, output, Signals(faceCount = 1, faceTooLowInFrame = true))
+        stabilize(session, output, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceTooLowInFrame = true))
 
-        session.onCandidates(output, Signals(faceCount = 1, faceTooLowInFrame = false), 300)
+        session.onCandidates(output, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceTooLowInFrame = false), 300)
         session.tick(799)
         assertInstanceOf(GuidanceStage.Action::class.java, session.snapshot().stage)
         session.tick(1_700)
@@ -198,11 +229,11 @@ class GuidanceSessionTest {
         assertInstanceOf(GuidanceStage.Capturing::class.java, observing.snapshot().stage)
 
         val first = readySession()
-        stabilize(first, output(listOf(moveCloser(), subjectCue())), Signals(faceCount = 1, faceRatio = 0.04f))
+        stabilize(first, output(listOf(moveCloser(), subjectCue())), Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.04f))
         assertTrue(first.onShutter())
 
         val second = readySession()
-        stabilize(second, output(listOf(moveCloser(), subjectCue())), Signals(faceCount = 1, faceRatio = 0.04f))
+        stabilize(second, output(listOf(moveCloser(), subjectCue())), Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.04f))
         second.skip(250)
         assertEquals("2/2", second.snapshot().stepLabel)
         assertTrue(second.onShutter())
@@ -211,7 +242,7 @@ class GuidanceSessionTest {
     @Test
     fun mutedSubjectFallsBackToReadyWithoutWaitingForPoseMatch() {
         val session = readySession()
-        stabilize(session, output(listOf(moveCloser(), subjectCue())), Signals(faceCount = 1, faceRatio = 0.04f))
+        stabilize(session, output(listOf(moveCloser(), subjectCue())), Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.04f))
         session.skip(250)
         session.onPlaybackUnavailable()
         session.tick(2_749)
@@ -235,7 +266,7 @@ class GuidanceSessionTest {
         stabilize(
             session,
             output(listOf(moveCloser(priority = 100), retreat, subjectCue())),
-            Signals(faceCount = 1, faceRatio = 0.04f),
+            Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.18f),
         )
         session.skip(250)
         assertEquals(subjectCue().text, session.takeCueForSpeech(300)?.text)
@@ -257,21 +288,21 @@ class GuidanceSessionTest {
             priority = 80,
         )
         val initial = output(listOf(moveCloser(priority = 100), retreat, subjectCue()))
-        stabilize(session, initial, Signals(faceCount = 1, faceRatio = 0.04f))
+        stabilize(session, initial, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.18f))
         session.skip(250)
         session.skip(350)
         assertTrue(session.snapshot().canRequestOptional)
 
-        session.onCandidates(output(emptyList()), Signals(faceCount = 1, poseAvailable = true), 400)
+        session.onCandidates(output(emptyList()), Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.18f, poseAvailable = true), 400)
         assertTrue(session.snapshot().canRequestOptional)
-        session.onCandidates(output(emptyList()), Signals(faceCount = 1, poseAvailable = true), 500)
+        session.onCandidates(output(emptyList()), Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.18f, poseAvailable = true), 500)
         assertTrue(session.snapshot().canRequestOptional)
-        session.onCandidates(initial, Signals(faceCount = 1, poseAvailable = true), 600)
+        session.onCandidates(initial, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.18f, poseAvailable = true), 600)
         assertTrue(session.snapshot().canRequestOptional)
 
-        session.onCandidates(output(emptyList()), Signals(faceCount = 1, poseAvailable = true), 700)
-        session.onCandidates(output(emptyList()), Signals(faceCount = 1, poseAvailable = true), 800)
-        session.onCandidates(output(emptyList()), Signals(faceCount = 1, poseAvailable = true), 900)
+        session.onCandidates(output(emptyList()), Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.18f, poseAvailable = true), 700)
+        session.onCandidates(output(emptyList()), Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.18f, poseAvailable = true), 800)
+        session.onCandidates(output(emptyList()), Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.18f, poseAvailable = true), 900)
         assertFalse(session.snapshot().canRequestOptional)
     }
 
@@ -300,17 +331,17 @@ class GuidanceSessionTest {
         stabilize(
             session,
             output(listOf(moveCloser(), subjectCue())),
-            Signals(faceCount = 1, faceRatio = 0.04f),
+            Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.04f),
         )
         session.skip(250)
 
         val changed = output(listOf(angleBodyCue()))
-        session.onCandidates(changed, Signals(faceCount = 1, poseAvailable = true), 400)
-        session.onCandidates(changed, Signals(faceCount = 1, poseAvailable = true), 700)
-        session.onCandidates(changed, Signals(faceCount = 1, poseAvailable = true), 1_000)
+        session.onCandidates(changed, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f, poseAvailable = true), 400)
+        session.onCandidates(changed, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f, poseAvailable = true), 700)
+        session.onCandidates(changed, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f, poseAvailable = true), 1_000)
         assertEquals(CueId.CHIN_DOWN, session.snapshot().currentCue?.id)
 
-        session.onCandidates(changed, Signals(faceCount = 1, poseAvailable = true), 1_800)
+        session.onCandidates(changed, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f, poseAvailable = true), 1_800)
         assertEquals(CueId.ANGLE_BODY, session.snapshot().currentCue?.id)
         assertEquals("2/2", session.snapshot().stepLabel)
     }
@@ -321,16 +352,16 @@ class GuidanceSessionTest {
         stabilize(
             session,
             output(listOf(moveCloser(), subjectCue())),
-            Signals(faceCount = 1, faceRatio = 0.04f),
+            Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.04f),
         )
 
         val changed = output(listOf(focusFace(), subjectCue()))
-        session.onCandidates(changed, Signals(faceCount = 1, focusOnFace = false), 400)
-        session.onCandidates(changed, Signals(faceCount = 1, focusOnFace = false), 700)
-        session.onCandidates(changed, Signals(faceCount = 1, focusOnFace = false), 1_000)
+        session.onCandidates(changed, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, focusOnFace = false), 400)
+        session.onCandidates(changed, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, focusOnFace = false), 700)
+        session.onCandidates(changed, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, focusOnFace = false), 1_000)
         assertEquals(CueId.MOVE_CLOSER, session.snapshot().currentCue?.id)
 
-        session.onCandidates(changed, Signals(faceCount = 1, focusOnFace = false), 1_800)
+        session.onCandidates(changed, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, focusOnFace = false), 1_800)
         assertEquals(CueId.FOCUS_FACE, session.snapshot().currentCue?.id)
         assertEquals("1/2", session.snapshot().stepLabel)
     }
@@ -341,15 +372,15 @@ class GuidanceSessionTest {
         stabilize(
             session,
             output(listOf(moveCloser(), subjectCue())),
-            Signals(faceCount = 1, faceRatio = 0.04f),
+            Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.04f),
         )
         session.skip(250)
 
         val noSubjectCue = output(emptyList())
-        session.onCandidates(noSubjectCue, Signals(faceCount = 1), 400)
-        session.onCandidates(noSubjectCue, Signals(faceCount = 1), 700)
-        session.onCandidates(noSubjectCue, Signals(faceCount = 1), 1_000)
-        session.onCandidates(noSubjectCue, Signals(faceCount = 1), 1_800)
+        session.onCandidates(noSubjectCue, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f), 400)
+        session.onCandidates(noSubjectCue, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f), 700)
+        session.onCandidates(noSubjectCue, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f), 1_000)
+        session.onCandidates(noSubjectCue, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f), 1_800)
 
         assertInstanceOf(GuidanceStage.Ready::class.java, session.snapshot().stage)
         assertEquals(null, session.snapshot().currentCue)
@@ -361,7 +392,7 @@ class GuidanceSessionTest {
         stabilize(
             session,
             output(listOf(moveCloser(), subjectCue())),
-            Signals(faceCount = 1, faceRatio = 0.04f),
+            Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.04f),
         )
         session.skip(250)
         session.onPlaybackFinished(300)
@@ -371,9 +402,9 @@ class GuidanceSessionTest {
         assertEquals(CueId.CHIN_DOWN, session.snapshot().currentCue?.id)
 
         val changed = output(listOf(angleBodyCue()))
-        session.onCandidates(changed, Signals(faceCount = 1, poseAvailable = true), 1_400)
-        session.onCandidates(changed, Signals(faceCount = 1, poseAvailable = true), 1_700)
-        session.onCandidates(changed, Signals(faceCount = 1, poseAvailable = true), 2_000)
+        session.onCandidates(changed, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f, poseAvailable = true), 1_400)
+        session.onCandidates(changed, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f, poseAvailable = true), 1_700)
+        session.onCandidates(changed, Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f, poseAvailable = true), 2_000)
 
         assertEquals(null, session.snapshot().currentCue)
         assertTrue(session.snapshot().canRequestOptional)
@@ -387,7 +418,7 @@ class GuidanceSessionTest {
         stabilize(
             session,
             output(listOf(moveCloser(), subjectCue())),
-            Signals(faceCount = 1, faceRatio = 0.04f),
+            Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.04f),
         )
         session.skip(250)
 
@@ -404,7 +435,7 @@ class GuidanceSessionTest {
         stabilize(
             session,
             output(listOf(subjectCue())),
-            Signals(faceCount = 1, poseAvailable = true, headTiltedBack = true),
+            Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f, poseAvailable = true, headTiltedBack = true),
         )
 
         assertInstanceOf(GuidanceStage.Action::class.java, session.snapshot().stage)
@@ -418,7 +449,7 @@ class GuidanceSessionTest {
         val session = readySession()
         session.onCandidates(
             output(emptyList()),
-            Signals(faceCount = 1, faceRatio = CueSelector.CLOSE_UP_MIN_FACE_RATIO),
+            Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = CueSelector.CLOSE_UP_MIN_FACE_RATIO),
             100,
         )
         session.tick(GuidanceSession.OBSERVATION_TIMEOUT_MS)
@@ -436,7 +467,7 @@ class GuidanceSessionTest {
     @Test
     fun latePoseAfterShooterStepStaysOptional() {
         val session = readySession()
-        stabilize(session, output(listOf(moveCloser())), Signals(faceCount = 1, faceRatio = 0.04f))
+        stabilize(session, output(listOf(moveCloser())), Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.04f))
         session.skip(250)
         assertInstanceOf(GuidanceStage.Ready::class.java, session.snapshot().stage)
 
@@ -451,7 +482,7 @@ class GuidanceSessionTest {
     @Test
     fun currentShooterCueIsSpeakableAndRateLimited() {
         val session = readySession()
-        stabilize(session, output(listOf(moveCloser())), Signals(faceCount = 1, faceRatio = 0.04f))
+        stabilize(session, output(listOf(moveCloser())), Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = 0.04f))
 
         assertEquals("走近一步", session.takeCueForSpeech(300)?.text)
         assertEquals(null, session.takeCueForSpeech(301))
@@ -509,17 +540,17 @@ class GuidanceSessionTest {
         stabilize(session, output(listOf(recovery)), Signals())
         session.onCandidates(
             output(emptyList()),
-            Signals(faceCount = 1, poseAvailable = true),
+            Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f, poseAvailable = true),
             1_800,
         )
         session.onCandidates(
             output(emptyList()),
-            Signals(faceCount = 1, poseAvailable = true),
+            Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f, poseAvailable = true),
             2_100,
         )
         session.onCandidates(
             output(emptyList()),
-            Signals(faceCount = 1, poseAvailable = true),
+            Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f, poseAvailable = true),
             2_400,
         )
         session.tick(3_000)
@@ -533,7 +564,7 @@ class GuidanceSessionTest {
         assertEquals(CueId.FIND_PERSON, session.snapshot().currentCue?.id)
     }
 
-    private fun readySession(): GuidanceSession = GuidanceSession().apply { onCameraReady(0) }
+    private fun readySession(): GuidanceSession = GuidanceSession(maximumSignalAgeMs = 60_000).apply { onCameraReady(0) }
 
     private fun stabilize(session: GuidanceSession, output: CoachOutput, signals: Signals) {
         session.onCandidates(output, signals, 10)
@@ -544,7 +575,7 @@ class GuidanceSessionTest {
     private fun stabilizeAfterReady(
         session: GuidanceSession,
         output: CoachOutput,
-        signals: Signals = Signals(faceCount = 1, poseAvailable = true),
+        signals: Signals = Signals(faceCount = 1, faceReliable = true, qualityEvidenceComplete = true, faceRatio = .18f, poseAvailable = true),
     ) {
         session.onCandidates(output, signals, 1_600)
         session.onCandidates(output, signals, 1_800)

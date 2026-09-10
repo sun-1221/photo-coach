@@ -8,6 +8,16 @@ import org.junit.jupiter.api.Test
 
 class CoachRulesTest {
     private val engine = CoachEngine.loadDefault()
+    @Test
+    fun darkFaceDoesNotRepeatMeteringAfterSuccessfulFaceTap() {
+        val dark = Signals(faceCount = 1, faceRatio = .18f, faceDarkerThanScene = true)
+        assertTrue(engine.evaluate(dark, ShotIntent.CLOSE_UP).cues.any { it.id == CueId.FOCUS_FACE })
+        val metered = dark.copy(faceMetered = true)
+        assertFalse(engine.evaluate(metered, ShotIntent.CLOSE_UP).cues.any { it.id == CueId.FOCUS_FACE })
+        assertTrue(engine.evaluate(metered.copy(focusOnFace = false), ShotIntent.CLOSE_UP)
+            .cues.any { it.id == CueId.FOCUS_FACE })
+    }
+
 
     @Test
     fun userIntentHardFiltersSceneryAndNeverUsesTelephotoForIt() {
