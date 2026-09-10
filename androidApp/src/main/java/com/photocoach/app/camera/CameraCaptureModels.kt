@@ -23,6 +23,7 @@ data class CapturedPhoto(
     val completedSaveStages: Set<SaveStage> = emptySet(),
     val beautyPreset: BeautyPreset = BeautyPreset.OFF,
     val beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
+    val edit: EditAdjustment = EditAdjustment(),
 )
 
 data class ExportedCopy(
@@ -45,4 +46,5 @@ data class CaptureSpec(
     val portraitRegion: NormalizedFaceRegion? = null,
     val beautyPreset: BeautyPreset = BeautyPreset.OFF,
     val beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
+    val batchId: String? = null,
 )

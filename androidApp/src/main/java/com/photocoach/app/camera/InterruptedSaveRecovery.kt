@@ -23,15 +23,49 @@ internal class InterruptedSaveRecovery(
     private val creativeProcessor: CreativeImageProcessor,
     private val wallClockMillis: () -> Long = System::currentTimeMillis,
 ) {
-    fun recover() {
+    fun recover(onlyKey: String? = null): List<SaveJournal> {
         MotionTemporaryPolicy.expired(motionDirectory.listFiles()?.toList().orEmpty(), wallClockMillis())
             .forEach(File::delete)
         journalStore.readAll().forEach { originalRecord ->
+            if (onlyKey != null && originalRecord.key != onlyKey) return@forEach
+            if (originalRecord.exportSourceUri != null) {
+                runCatching { recoverExport(originalRecord) }
+                return@forEach
+            }
             val lease = SaveTransactionRegistry.tryAcquire(
                 journalStore.transactionKey(originalRecord.captureId, originalRecord.sequence),
             ) ?: return@forEach
-            lease.use { recoverRecord(originalRecord) }
+            lease.use {
+                recoverRecord(originalRecord)
+            }
         }
+        return journalStore.readAll().filter { SaveStage.COMPLETE.name !in it.completedStages || it.error != null }
+    }
+
+    private fun exportRunner() = ExportTransactionRunner(journalStore,
+        generate = { record ->
+            val processed = creativeProcessor.process(resolver, Uri.parse(requireNotNull(record.exportSourceUri)),
+                CreativeStyle.valueOf(record.style),
+                EditAdjustment(record.exposureStops, record.contrast, record.saturation, record.temperature,
+                    record.tint, record.fade, record.styleStrength), DerivativeQuality.valueOf(record.derivativeQuality),
+                beautyPreset = BeautyPreset.requireSupported(record.beautyPreset, record.beautyEngineVersion))
+            GeneratedExport(processed.file, processed.wasDownsampled, processed.beautyWarning)
+        },
+        publish = { record, file, pending ->
+            CaptureSaver.publish(resolver, file, record.displayName, record.takenAtMillis,
+                existingUri = record.derivativePendingUri?.let(Uri::parse),
+                onPendingCreated = { pending(it.toString()) }).toString()
+        },
+        verify = { record, uri -> PublishedAssetVerifier.verifyPublished(resolver, Uri.parse(uri),
+            record.displayName, CaptureSaver.RELATIVE_DIR, false); Unit },
+    )
+
+    internal fun recoverExport(original: SaveJournal): ExportedCopy = exportRunner().retry(original).let {
+        ExportedCopy(Uri.parse(it.uri), it.downsampled, it.warning)
+    }
+
+    internal fun createExport(original: SaveJournal): ExportedCopy = exportRunner().create(original).let {
+        ExportedCopy(Uri.parse(it.uri), it.downsampled, it.warning)
     }
 
     private fun recoverRecord(originalRecord: SaveJournal) {
@@ -381,11 +415,7 @@ internal class InterruptedSaveRecovery(
 
     // Do not forget a row or publish a replacement when MediaStore refuses its deletion.
     private fun deleteFailedAsset(uri: Uri?) {
-        if (uri == null) return
-        // publish() may already have deleted this row while propagating its validation error.
-        val exists = resolver.query(uri, arrayOf(MediaStore.Images.Media._ID), null, null, null)
-            ?.use { it.moveToFirst() } ?: error("无法确认失败照片是否已清理")
-        if (exists) check(resolver.delete(uri, null, null) == 1) { "无法清理失败照片，暂不发布替代项" }
+        CaptureSaver.deleteConfirmed(resolver, uri)
     }
 
     private fun cleanupRecoveredRecord(record: SaveJournal) {

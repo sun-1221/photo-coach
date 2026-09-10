@@ -46,14 +46,22 @@ data class SaveJournal(
     val stageRetryCounts: Map<String, Int> = emptyMap(),
     val beautyPreset: String = BeautyPreset.OFF.name,
     val beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
+    val batchId: String? = null,
+    val derivativeId: String? = null,
+    val exportSourceUri: String? = null,
+    val effectWasDownsampled: Boolean = false,
+    val exportWarning: String? = null,
 ) {
     init {
         CaptureId(captureId)
+        derivativeId?.let(::CaptureId)
+        batchId?.let(::CaptureId)
         require(sequence in 1..99)
         require(schemaVersion in 1..CURRENT_SCHEMA_VERSION)
     }
 
-    val key: String get() = "${captureId}_S${sequence.toString().padStart(2, '0')}"
+    val key: String get() = "${captureId}_S${sequence.toString().padStart(2, '0')}" +
+        (derivativeId?.let { "_D$it" } ?: "")
 
     companion object { const val CURRENT_SCHEMA_VERSION = 3 }
 }
@@ -63,6 +71,9 @@ class SaveJournalStore(private val directory: File) {
 
     internal fun transactionKey(captureId: String, sequence: Int): String =
         "${directory.absolutePath}/$captureId/$sequence"
+
+    internal fun transactionKey(record: SaveJournal): String =
+        transactionKey(record.captureId, record.sequence) + (record.derivativeId?.let { "/$it" } ?: "")
 
     internal fun read(record: SaveJournal): SaveJournal? = fileFor(record).takeIf(File::isFile)?.let {
         json.decodeFromString<SaveJournal>(it.readText(Charsets.UTF_8))

@@ -11,20 +11,33 @@ data class ResearchEvent(
     val stage: String,
     val cueId: String? = null,
     val result: String? = null,
+    val sessionId: String = "unknown",
 )
 
 class ResearchEventLogger(
     private val file: File,
+    private val maximumBytes: Long = 4L * 1024 * 1024,
 ) {
+    @Volatile var failedWrites: Long = 0
+        private set
+
     @Synchronized
-    fun record(event: ResearchEvent) {
+    fun record(event: ResearchEvent): Boolean = try {
+        val line = event.toJsonLine() + "\n"
+        check(line.length <= 16_384 && file.length() + line.toByteArray(Charsets.UTF_8).size <= maximumBytes)
         file.parentFile?.mkdirs()
-        file.appendText(event.toJsonLine() + "\n", Charsets.UTF_8)
+        file.appendText(line, Charsets.UTF_8)
+        true
+    } catch (_: Exception) {
+        failedWrites++
+        false
     }
 
     private fun ResearchEvent.toJsonLine(): String = buildString {
         append('{')
         field("type", type)
+        field("sessionId", sessionId)
+        field("previousFailedWrites", failedWrites)
         field("occurredAtMs", occurredAtMs)
         field("elapsedMs", elapsedMs)
         field("intent", intent)

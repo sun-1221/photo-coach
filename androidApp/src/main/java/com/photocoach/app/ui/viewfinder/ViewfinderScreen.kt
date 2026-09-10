@@ -187,6 +187,7 @@ fun ViewfinderScreen(
                     onBeautyPresetChange = onBeautyPresetChange,
                     onModePreferenceChange = onModePreferenceChange,
                     onApplyParameterSuggestion = onApplyParameterSuggestion,
+                    onParameterPanelChange = onParameterPanelChange,
                     onOpenCreativeResult = onOpenCreativeResult,
                     modifier = Modifier.width(landscapePanelWidth).fillMaxSize().statusBarsPadding(),
                     compactRail = landscapePanelWidth < 320.dp,
@@ -238,6 +239,7 @@ fun ViewfinderScreen(
                     onBeautyPresetChange = onBeautyPresetChange,
                     onModePreferenceChange = onModePreferenceChange,
                     onApplyParameterSuggestion = onApplyParameterSuggestion,
+                    onParameterPanelChange = onParameterPanelChange,
                     onOpenCreativeResult = onOpenCreativeResult,
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
@@ -248,6 +250,26 @@ fun ViewfinderScreen(
             }
         }
 
+        if (ui.remainingBurstShots > 0 && !ui.parameterPanelOpen) {
+            Row(Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.8f))) {
+                TextButton(onClick = onContinueBurst) { Text("继续拍剩余 ${ui.remainingBurstShots} 张") }
+                TextButton(onClick = onDiscardSave) { Text("结束本批") }
+            }
+        }
+        if (ui.parameterPanelOpen) {
+            Column(Modifier.align(Alignment.Center).background(MaterialTheme.colorScheme.surface)
+                .padding(16.dp).testTag("parameter_panel")) {
+                Text("参数建议")
+                if (ui.parameterSuggestions.isEmpty()) Text("暂无建议，可随时拍摄")
+                ui.parameterSuggestions.take(3).forEach { suggestion ->
+                    Text(suggestion.title)
+                    Text(suggestion.text)
+                    if (suggestion.action != null) TextButton(onClick = { onApplyParameterSuggestion(suggestion) }) { Text("应用") }
+                }
+                TextButton(onClick = { onParameterPanelChange(false) }) { Text("关闭") }
+                Button(onClick = onCapture, enabled = ui.guidance.shutterEnabled) { Text("拍照") }
+            }
+        }
         ui.cameraError?.let { error ->
             ErrorRecovery(
                 message = error,
@@ -279,6 +301,30 @@ fun ViewfinderScreen(
                     .padding(horizontal = 28.dp, vertical = 16.dp),
             )
         }
+        if (ui.researchEvidenceIncomplete) {
+            Text("研究事件记录不完整，本轮不能用于指标结论", color = Color.White,
+                modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding()
+                    .background(Color.Black.copy(alpha = 0.8f)).padding(8.dp))
+        }
+        if (ui.recoveryRecords.isNotEmpty() && !ui.recoveryPanelOpen) {
+            TextButton(onClick = { onRecoveryPanelChange(true) },
+                modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding()) {
+                Text("${ui.recoveryRecords.size} 项未完成保存")
+            }
+        }
+        if (ui.recoveryPanelOpen) {
+            Column(Modifier.align(Alignment.Center).background(MaterialTheme.colorScheme.surface)
+                .heightIn(max = 420.dp).verticalScroll(rememberScrollState()).padding(16.dp)
+                .testTag("recovery_assets")) {
+                Text("未完成保存：只重试所选照片，不重新拍摄")
+                ui.recoveryRecords.forEach { record ->
+                    Text(record.displayName, maxLines = 2)
+                    Text(record.error ?: record.failedStage ?: "保存未完成")
+                    TextButton(onClick = { onRetryRecoveredSave(record.key) }, enabled = !ui.recoveryBusy) { Text("重试此项") }
+                }
+                TextButton(onClick = { onRecoveryPanelChange(false) }) { Text("稍后处理（保留记录和照片）") }
+            }
+        }
         if (ui.ttsFailed) {
             Text(
                 text = if (ui.subjectCaptionsEnabled) {
@@ -306,6 +352,7 @@ fun ViewfinderScreen(
                 onReset = onResetCreativeEdit,
                 onCompareOriginal = onCompareOriginal,
                 onSaveCopy = onSaveCreativeCopy,
+                onRetryCopy = onRetryCreativeCopy,
                 onOpenPhoto = onOpenPhoto,
                 onSharePhoto = onSharePhoto,
                 onFavoritePhoto = onFavoritePhoto,
@@ -342,6 +389,8 @@ private fun PreviewPane(
     dockClearance: Dp = 0.dp,
 ) {
     var previewEffectError by remember { mutableStateOf<String?>(null) }
+    var exposurePinned by remember { mutableStateOf(false) }
+    val exposureVisible = (ui.showEv || exposurePinned) && ui.exposureCapability.supported
     BoxWithConstraints(modifier.background(Color.Black)) {
         Box(Modifier.fillMaxSize().testTag("camera_surface")) {
             AndroidView(
@@ -388,7 +437,8 @@ private fun PreviewPane(
             )
             FocusOverlay(ui)
             val beautyMessage = ui.beautyPreviewWarning ?: if (ui.beautyPreset != BeautyPreset.OFF &&
-                !ThermalPolicy.forLevel(ui.thermalLevel).stylePreviewEnabled) "热策略已暂停实时美颜，原片和指导继续" else null
+                !ThermalPolicy.forLevel(ui.thermalLevel).stylePreviewEnabled) "热策略已暂停实时美颜，原片和指导继续"
+                else if (ui.beautyPreset != BeautyPreset.OFF) ui.beautyPreviewState.text else null
             listOfNotNull(previewEffectError, beautyMessage).joinToString("；").takeIf(String::isNotBlank)?.let { message ->
                 Text(
                     text = message,
@@ -399,7 +449,7 @@ private fun PreviewPane(
                         .padding(
                             start = 16.dp,
                             end = 16.dp,
-                            bottom = dockClearance + if (ui.showEv && ui.exposureCapability.supported) 64.dp else 8.dp,
+                            bottom = dockClearance + if (exposureVisible) 64.dp else 8.dp,
                         )
                         .background(Color.Black.copy(alpha = 0.78f), RoundedCornerShape(6.dp))
                         .padding(horizontal = 10.dp, vertical = 6.dp)
@@ -422,9 +472,10 @@ private fun PreviewPane(
             onToggleFlash = onToggleFlash,
             onSelectIntent = onSelectIntent,
             onExit = onExit,
+            onToggleExposure = { exposurePinned = !exposurePinned },
             modifier = Modifier.align(Alignment.TopCenter),
         )
-        if (ui.showEv && ui.exposureCapability.supported) {
+        if (exposureVisible) {
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -434,14 +485,17 @@ private fun PreviewPane(
                     .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("EV", color = Color.White)
+                Text("暗", color = Color.White)
                 Slider(
                     value = ui.evStops,
                     onValueChange = onEv,
                     valueRange = ui.exposureCapability.minimumStops..ui.exposureCapability.maximumStops,
                     modifier = Modifier.weight(1f).testTag("ev_slider"),
                 )
-                Text(if (ui.evStops >= 0f) "+${ui.evStops}" else ui.evStops.toString(), color = Color.White)
+                Text("亮", color = Color.White)
+                TextButton(onClick = { onEv(0f) }, modifier = Modifier.testTag("ev_reset")) {
+                    Text("重置", color = Color.White)
+                }
             }
         }
     }
@@ -463,6 +517,7 @@ private fun TopBar(
     onToggleFlash: () -> Unit,
     onSelectIntent: (ShotIntent) -> Unit,
     onExit: () -> Unit,
+    onToggleExposure: () -> Unit,
     modifier: Modifier,
 ) {
     Column(
@@ -480,6 +535,11 @@ private fun TopBar(
         ) {
             CameraIconControl(Icons.Rounded.Close, "退出相机", "exit", onExit)
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (ui.exposureCapability.supported) {
+                    TextButton(onClick = onToggleExposure, modifier = Modifier.testTag("exposure_control")) {
+                        Text(if (ui.exposurePending) "调亮·调整中" else if (ui.exposureFailed) "调亮·未确认" else "调亮 ${formatSigned(ui.evStops)}", color = Color.White)
+                    }
+                }
                 PromptSettingsControl(
                     ui = ui,
                     onVoiceEnabledChange = onVoiceEnabledChange,
@@ -559,6 +619,7 @@ private fun OperationPanel(
     onBeautyPresetChange: (BeautyPreset) -> Unit,
     onModePreferenceChange: (CameraModePreference) -> Unit,
     onApplyParameterSuggestion: (ParameterSuggestion) -> Unit,
+    onParameterPanelChange: (Boolean) -> Unit,
     onOpenCreativeResult: () -> Unit,
     modifier: Modifier,
     compactRail: Boolean = false,
@@ -584,7 +645,7 @@ private fun OperationPanel(
             .padding(horizontal = spacing.space3, vertical = spacing.compactDockVertical),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
-        Row(
+        if (!ui.parameterPanelOpen) Row(
             modifier = Modifier.fillMaxWidth().height(guidanceHeight),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -712,6 +773,7 @@ private fun OperationPanel(
                     onBeautyPresetChange = onBeautyPresetChange,
                     onModePreferenceChange = onModePreferenceChange,
                     onApplyParameterSuggestion = onApplyParameterSuggestion,
+                    onParameterPanelChange = onParameterPanelChange,
                     onOpenCreativeResult = onOpenCreativeResult,
                 )
                 LatestPhoto(ui.recentPhoto, onOpenRecentPhoto)
@@ -767,6 +829,7 @@ private fun CreativeCaptureControl(
     onBeautyPresetChange: (BeautyPreset) -> Unit,
     onModePreferenceChange: (CameraModePreference) -> Unit,
     onApplyParameterSuggestion: (ParameterSuggestion) -> Unit,
+    onParameterPanelChange: (Boolean) -> Unit,
     onOpenCreativeResult: () -> Unit,
 ) {
     val capturing = ui.guidance.stage is GuidanceStage.Capturing
@@ -784,7 +847,7 @@ private fun CreativeCaptureControl(
                 Text(
                     ui.burstProgress?.let { "$it/3" }
                         ?: if (ui.beautyPreset != BeautyPreset.OFF) "美颜·${ui.beautyPreset.label}"
-                        else "美颜·风格",
+                        else "美颜·关闭",
                     maxLines = if (largeText) 2 else 1,
                     style = MaterialTheme.typography.labelSmall,
                 )
@@ -803,7 +866,9 @@ private fun CreativeCaptureControl(
                 onStyleChange = onStyleChange,
             )
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Text("美颜 · 自然上镜", style = MaterialTheme.typography.titleSmall)
+                Text("美颜 · 自然上镜（${ui.beautyPreset.label}）", style = MaterialTheme.typography.titleSmall)
+                Text("下方颜色风格不等于美颜；美颜需单独选择自然或柔和。",
+                    style = MaterialTheme.typography.labelSmall)
                 Text("复用本机人脸关键点，局部柔化纹理；不上传、不改脸形。原片不变，效果需另存；预览近似。仅普通模式，与 Live 互斥。",
                     style = MaterialTheme.typography.labelSmall)
                 Text("初始参数待小米 14 Pro 真机校准", style = MaterialTheme.typography.labelSmall)
@@ -967,29 +1032,10 @@ private fun CreativeCaptureControl(
                     modifier = Modifier.testTag("open_creative_result"),
                 )
             }
-            if (ui.parameterSuggestions.isEmpty()) {
-                DropdownMenuItem(
-                    text = { SettingText("参数建议", "当前参数可以直接拍") },
-                    enabled = false,
-                    onClick = {},
-                    modifier = Modifier.testTag("parameter_suggestion_empty"),
-                )
-            } else {
-                ui.parameterSuggestions.take(3).forEachIndexed { index, suggestion ->
-                    DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text(suggestion.title)
-                                Text(suggestion.text, style = MaterialTheme.typography.labelSmall)
-                                if (suggestion.action != null) Text("点按一键应用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                            }
-                        },
-                        enabled = suggestion.action != null,
-                        onClick = { onApplyParameterSuggestion(suggestion) },
-                        modifier = Modifier.testTag("parameter_suggestion_$index"),
-                    )
-                }
-            }
+            DropdownMenuItem(
+                text = { Text("打开参数建议") },
+                onClick = { expanded = false; onParameterPanelChange(true) },
+            )
             DropdownMenuItem(
                 text = {
                     Text(
@@ -1420,7 +1466,6 @@ private fun guidanceText(ui: ViewfinderUi): String {
         is GuidanceStage.Action -> promptText(stage.cue.audience, stage.cue.text, ui.subjectCaptionsEnabled)
         is GuidanceStage.Ready -> when {
         !stage.qualityConfirmed && stage.readinessIssue != null -> checkNotNull(stage.readinessIssue).text
-            ui.poseCueText != null -> ui.poseCueText
             stage.qualityConfirmed && ui.subjectCaptionsEnabled && stage.retainedSubjectCue != null ->
                 checkNotNull(stage.retainedSubjectCue).text
             ui.guidance.canRequestOptional -> "发现新建议，可再优化"

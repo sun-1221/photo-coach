@@ -105,6 +105,7 @@ class CameraBinder(
     private var discovered = DiscoveredCameras(emptyList(), emptyMap())
     private var selectedFocalId: String? = null
     private var camera: Camera? = null
+    private val exposureController = ExposureController()
     private var imageCapture: ImageCapture? = null
     private var sessionCoordinator: CameraSessionCoordinator? = null
     private var livePhotoAvailable = false
@@ -116,6 +117,9 @@ class CameraBinder(
     private var captureInProgress = false
     private var released = false
     private var saveWorkInProgress = false
+    private var focusGeneration = 0L
+    var recoveryFailures: List<SaveJournal> = emptyList()
+        private set
     private var captureLease: SaveTransactionRegistry.Lease? = null
     private var smoothZoomRatio = 1f
     private val prepareMutex = Mutex()
@@ -133,7 +137,7 @@ class CameraBinder(
 
     suspend fun prepare() = prepareMutex.withLock {
         if (provider != null) return
-        withContext(Dispatchers.IO) { interruptedSaveRecovery.recover() }
+        recoveryFailures = withContext(Dispatchers.IO) { interruptedSaveRecovery.recover() }
         val cameraProvider = awaitProvider()
         provider = cameraProvider
         extensions = runCatching { awaitExtensions(cameraProvider) }.getOrNull()
@@ -155,7 +159,8 @@ class CameraBinder(
         onBeautyFallback: (String) -> Unit = {},
         onBeautyPreviewState: (BeautyPreviewState) -> Unit = {},
     ): CameraCapabilities? {
-        if (released) return null
+        if (released || captureInProgress || saveWorkInProgress) return null
+        focusGeneration++
         val cameraProvider = provider ?: run {
             onError(IllegalStateException("camera provider missing"))
             return null
@@ -185,6 +190,7 @@ class CameraBinder(
             }
         }
         beautyEffect = effect
+        exposureController.invalidate()
         camera = null
         aeAfLocked = false
         analyzer?.close()
@@ -381,15 +387,21 @@ class CameraBinder(
         return target * (currentFocalPreset()?.relativeZoom ?: 1f)
     }
 
-    fun setExposure(evStops: Float): Float {
-        val activeCamera = camera ?: return 0f
+    fun setExposure(evStops: Float, onResult: (Result<Float>) -> Unit) {
+        val activeCamera = camera
+        if (activeCamera == null) {
+            exposureController.invalidate()
+            onResult(Result.failure(IllegalStateException("相机尚未就绪")))
+            return
+        }
         val state = activeCamera.cameraInfo.exposureState
-        val range = state.exposureCompensationRange
         val step = state.exposureCompensationStep.toFloat()
-        if (range.lower == 0 && range.upper == 0 || step <= 0f) return 0f
-        val index = (evStops / step).roundToInt().coerceIn(range.lower, range.upper)
-        activeCamera.cameraControl.setExposureCompensationIndex(index)
-        return index * step
+        val capability = ExposureCapability(state.exposureCompensationRange.lower * step,
+            state.exposureCompensationRange.upper * step, step)
+        exposureController.request(evStops, capability, apply = { index, complete ->
+            val future = activeCamera.cameraControl.setExposureCompensationIndex(index)
+            future.addListener({ complete(runCatching { future.get() }) }, mainExecutor)
+        }, onResult = onResult)
     }
 
     fun setFlash(setting: FlashSetting) {
@@ -419,9 +431,11 @@ class CameraBinder(
         )
         if (lock) builder.disableAutoCancel() else builder.setAutoCancelDuration(3, TimeUnit.SECONDS)
         aeAfLocked = false
+        val generation = ++focusGeneration
         val future = activeCamera.cameraControl.startFocusAndMetering(builder.build())
         future.addListener(
             {
+                if (released || camera !== activeCamera || generation != focusGeneration) return@addListener
                 val success = runCatching { future.get().isFocusSuccessful }.getOrDefault(false)
                 aeAfLocked = lock && success
                 if (lock && !success) activeCamera.cameraControl.cancelFocusAndMetering()
@@ -432,6 +446,7 @@ class CameraBinder(
     }
 
     fun unlockAeAf() {
+        focusGeneration++
         camera?.cameraControl?.cancelFocusAndMetering()
         aeAfLocked = false
     }
@@ -469,10 +484,11 @@ class CameraBinder(
 
     fun capture(
         spec: CaptureSpec,
-        onSaveProgress: (SaveSnapshot) -> Unit,
+        onSaveProgress: (CaptureSaveProgress) -> Unit,
         onSaved: (CapturedPhoto) -> Unit,
         onSaveError: (Throwable) -> Unit,
         onCaptureError: (Throwable) -> Unit,
+        onCaptureAccepted: () -> Unit = {},
     ) {
         val capture = imageCapture
         if (released || capture == null || captureInProgress || pendingCapture != null) {
@@ -576,6 +592,7 @@ class CameraBinder(
                     }
                 },
             )
+            onCaptureAccepted()
         } catch (error: Exception) {
             captureInProgress = false
             file.delete()
@@ -596,6 +613,22 @@ class CameraBinder(
         captureInProgress = true
         publishPending(onSaved, onSaveError)
         return true
+    }
+
+    private val recoveryBusy = AtomicBoolean(false)
+    fun loadRecoveryRecords(onResult: (List<SaveJournal>) -> Unit) {
+        saveExecutor.execute {
+            val records = journalStore.readAll().filter { SaveStage.COMPLETE.name !in it.completedStages || it.error != null }
+            mainExecutor.execute { recoveryFailures = records; onResult(records) }
+        }
+    }
+
+    fun retryInterruptedSaves(onResult: (List<SaveJournal>) -> Unit, key: String? = null) {
+        if (!recoveryBusy.compareAndSet(false, true)) return
+        saveExecutor.execute {
+            val remaining = runCatching { interruptedSaveRecovery.recover(key) }.getOrElse { recoveryFailures }
+            mainExecutor.execute { recoveryBusy.set(false); recoveryFailures = remaining; onResult(remaining) }
+        }
     }
 
     fun discardPending() {
@@ -622,26 +655,37 @@ class CameraBinder(
         onError: (Throwable) -> Unit,
         beautyPreset: BeautyPreset = BeautyPreset.OFF,
         beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
+        derivativeId: String = CaptureIdentity.create().value,
     ) {
         saveExecutor.execute {
             val result = runCatching {
-                val preset = BeautyPreset.requireSupported(beautyPreset.name, beautyEngineVersion)
-                val processed = creativeProcessor.process(context.contentResolver, source, style, edit, quality, beautyPreset = preset)
-                try {
-                    val uri = CaptureSaver.publish(
-                        context.contentResolver,
-                        processed.file,
-                        CaptureIdentity.displayName(captureId, CaptureAssetKind.EDITED, sequence, takenAtMillis),
-                        takenAtMillis,
-                    )
-                    ExportedCopy(uri, processed.wasDownsampled, processed.beautyWarning)
-                } finally {
-                    processed.file.delete()
-                }
+                val record = SaveJournal(
+                    captureId = captureId.value, sequence = sequence, takenAtMillis = takenAtMillis,
+                    sourcePath = "", displayName = CaptureIdentity.displayName(CaptureId(derivativeId), CaptureAssetKind.EDITED,
+                        sequence, takenAtMillis), style = style.name, derivativeId = derivativeId,
+                    exportSourceUri = source.toString(), derivativeQuality = quality.name,
+                    exposureStops = edit.exposureStops, contrast = edit.contrast, saturation = edit.saturation,
+                    temperature = edit.temperature, tint = edit.tint, fade = edit.fade, styleStrength = edit.styleStrength,
+                    beautyPreset = beautyPreset.name, beautyEngineVersion = beautyEngineVersion,
+                    failedStage = SaveStage.DERIVATIVE_GENERATE.name,
+                )
+                interruptedSaveRecovery.createExport(record)
+
             }
             mainExecutor.execute {
                 result.onSuccess(onSaved).onFailure(onError)
             }
+        }
+    }
+
+    fun retryEditedCopy(derivativeId: String, onSaved: (ExportedCopy) -> Unit, onError: (Throwable) -> Unit) {
+        saveExecutor.execute {
+            val result = runCatching {
+                val record = journalStore.readAll().singleOrNull { it.derivativeId == derivativeId }
+                    ?: error("副本事务不存在，不会按当前参数重新创建")
+                interruptedSaveRecovery.recoverExport(record)
+            }
+            mainExecutor.execute { result.onSuccess(onSaved).onFailure(onError) }
         }
     }
 
@@ -653,6 +697,8 @@ class CameraBinder(
     }
 
     fun release() {
+        exposureController.invalidate()
+        focusGeneration++
         released = true
         stopRollingRecording(deleteFile = true)
         unbindOwnedUseCases()
@@ -685,6 +731,8 @@ class CameraBinder(
     }
 
     private fun unbindOwnedUseCases() {
+        exposureController.invalidate()
+        focusGeneration++
         sessionCoordinator?.unbind()
     }
 
@@ -826,7 +874,25 @@ class CameraBinder(
         }
         saveWorkInProgress = true
         saveExecutor.execute {
-            val result = runCatching { publishNonDestructive(pending) }
+            val result = runCatching {
+                try {
+                    publishNonDestructive(pending)
+                } catch (error: Throwable) {
+                    if (!pending.isMotionPhoto || pending.originalUri != null ||
+                        pending.coordinator.snapshot.failedStage != SaveStage.ORIGINAL_PUBLISH) throw error
+                    CaptureSaver.deleteConfirmed(context.contentResolver, pending.pendingUri)
+                    pending.pendingUri = null
+                    pending.verifiedAssetStages.removeAll { it.startsWith("ORIGINAL:") }
+                    pending.coordinator.fallbackFromMotionPhoto("Live 发布失败")
+                    pending.isMotionPhoto = false
+                    val packageFile = pending.packagedFile
+                    pending.packagedFile = null
+                    pending.warnings += "Live 发布失败，已回退普通照片"
+                    writeJournal(pending)
+                    packageFile?.delete()
+                    publishNonDestructive(pending)
+                }
+            }
             mainExecutor.execute {
                 captureInProgress = false
                 saveWorkInProgress = false
@@ -884,6 +950,7 @@ class CameraBinder(
                     )
                 }
                 pending.displayName = displayName
+                writeJournal(pending)
                 try {
                     pending.originalUri = CaptureSaver.publish(
                         context.contentResolver,
@@ -891,6 +958,7 @@ class CameraBinder(
                         displayName,
                         pending.spec.takenAtMillis,
                         motionPhoto = pending.isMotionPhoto,
+                        existingUri = pending.pendingUri,
                         onAssetStage = { stage ->
                             pending.verifiedAssetStages += assetStageKey(PublishedAssetKind.ORIGINAL, stage)
                             if (stage == AssetPublishStage.VERIFY_PUBLISHED) pending.outputLength = pending.primaryFile().length()
@@ -903,7 +971,6 @@ class CameraBinder(
                     )
                     pending.pendingUri = null
                 } catch (error: Throwable) {
-                    pending.pendingUri = null
                     writeJournal(pending)
                     throw error
                 }
@@ -949,6 +1016,7 @@ class CameraBinder(
             }
             runStage(pending, SaveStage.DERIVATIVE_PUBLISH) {
                 if (pending.derivativeUri == null) {
+                    writeJournal(pending)
                     try {
                         pending.derivativeUri = CaptureSaver.publish(
                             context.contentResolver,
@@ -960,6 +1028,7 @@ class CameraBinder(
                                 pending.spec.takenAtMillis,
                             ),
                             pending.spec.takenAtMillis,
+                            existingUri = pending.derivativePendingUri,
                             onAssetStage = { stage ->
                                 pending.verifiedAssetStages += assetStageKey(PublishedAssetKind.DERIVATIVE, stage)
                                 writeJournal(pending)
@@ -971,7 +1040,6 @@ class CameraBinder(
                         )
                         pending.derivativePendingUri = null
                     } catch (error: Throwable) {
-                        pending.derivativePendingUri = null
                         writeJournal(pending)
                         throw error
                     }
@@ -996,6 +1064,7 @@ class CameraBinder(
             warning = warnings.joinToString("；").ifBlank { null },
             isMotionPhoto = pending.isMotionPhoto,
             completedSaveStages = pending.coordinator.snapshot.completed,
+            edit = pending.spec.edit,
             beautyPreset = pending.spec.beautyPreset,
             beautyEngineVersion = pending.spec.beautyEngineVersion,
         )
@@ -1011,7 +1080,9 @@ class CameraBinder(
             pending.coordinator.complete(stage)
             writeJournal(pending)
         } catch (error: Throwable) {
-            pending.coordinator.fail(stage, error.message ?: "保存阶段失败")
+            if (stage !in pending.coordinator.snapshot.completed) {
+                pending.coordinator.fail(stage, error.message ?: "保存阶段失败")
+            }
             writeJournal(pending)
             val partial = if (pending.coordinator.snapshot.isPartialSuccess) "原片已保存；" else ""
             throw IOException("${partial}${stage.userLabel()}失败：${error.message ?: "未知错误"}", error)
@@ -1100,7 +1171,8 @@ class CameraBinder(
 
     private fun writeJournal(pending: PendingCapture) {
         journalStore.write(pending.toJournal())
-        mainExecutor.execute { pending.onSaveProgress(pending.coordinator.snapshot) }
+        val progress = CaptureSaveProgress(pending.spec.captureId.value, pending.coordinator.snapshot)
+        mainExecutor.execute { pending.onSaveProgress(progress) }
     }
 
 

@@ -13,6 +13,7 @@ internal data class PoseMotionSample(
 )
 
 internal data class TemporalPoseSignals(
+    val motionObserved: Boolean = false,
     val walkingMotionStable: Boolean = false,
     val subjectMotionHigh: Boolean = false,
 )
@@ -37,6 +38,7 @@ internal class TemporalPoseTracker(private val windowMs: Long = 1_200L) {
             before * after < 0f && abs(after - before) / b.referenceSize >= MIN_ANKLE_CHANGE
         }
         return TemporalPoseSignals(
+            motionObserved = true,
             walkingMotionStable = displacement >= MIN_WALK_DISPLACEMENT && ankleSigns.count { it } >= 1,
             subjectMotionHigh = displacement >= HIGH_MOTION_DISPLACEMENT,
         )

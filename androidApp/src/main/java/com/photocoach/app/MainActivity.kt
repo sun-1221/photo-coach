@@ -105,8 +105,10 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(
                     ui.guidance.stage,
                     ui.voiceEnabled,
-                    ui.subjectCaptionsEnabled,
-                ) {
+                      ui.subjectCaptionsEnabled,
+                      ui.parameterPanelOpen,
+                  ) {
+                      if (ui.parameterPanelOpen) { tts.stop(); return@LaunchedEffect }
                     val activePrompt = when (ui.guidance.stage) {
                         is GuidanceStage.Action,
                         is GuidanceStage.Optional,
@@ -187,7 +189,7 @@ class MainActivity : ComponentActivity() {
         },
         onEv = {
             viewModel.applyUserEv(it)
-            viewModel.onExposureApplied(camera.setExposure(viewModel.currentEv()))
+            camera.setExposure(viewModel.currentEv(), viewModel::onExposureResult)
         },
         onSetFocal = ::setUserFocal,
         onZoomBy = { zoomBy(it) },
@@ -202,6 +204,8 @@ class MainActivity : ComponentActivity() {
         onResetSettings = {
             cancelScheduledCapture()
             viewModel.resetCameraSettings()
+            viewModel.applyUserEv(0f)
+            camera.setExposure(0f, viewModel::onExposureResult)
         },
         onUnlockFocus = {
             camera.unlockAeAf()
@@ -214,13 +218,15 @@ class MainActivity : ComponentActivity() {
         onCapture = ::capture,
         onOpenRecentPhoto = ::openRecentPhoto,
         onRetrySave = ::retrySave,
+        onContinueBurst = { if (viewModel.continueBurst()) captureNextShot() },
+        onParameterPanelChange = viewModel::setParameterPanelOpen,
         onDiscardSave = {
             camera.discardPending()
             viewModel.abandonSaveFailure()
         },
         onRetryCamera = ::prepareAndRebind,
         onOpenSettings = ::openAppSettings,
-        onExit = { finish() },
+        onExit = { viewModel.recordExit(); finish() },
         onHideFocusControls = viewModel::hideFocusControls,
         onDismissControlMessage = viewModel::dismissControlMessage,
         onCreativeStyleChange = viewModel::setCreativeStyle,
@@ -242,6 +248,15 @@ class MainActivity : ComponentActivity() {
         onResetCreativeEdit = viewModel::resetCreativeEdit,
         onCompareOriginal = viewModel::setCompareOriginal,
         onSaveCreativeCopy = ::saveCreativeCopy,
+        onRetryCreativeCopy = {
+            viewModel.beginExportRetry()?.let { id ->
+                camera.retryEditedCopy(id, { viewModel.onCreativeExported(it, id) }, { viewModel.onCreativeExportFailed(it, id) })
+            }
+        },
+        onRecoveryPanelChange = viewModel::showRecovery,
+        onRetryRecoveredSave = { key ->
+            if (viewModel.beginRecoveryRetry(key)) camera.retryInterruptedSaves(viewModel::onInterruptedSaves, key)
+        },
         onOpenPhoto = ::openRecentPhoto,
         onSharePhoto = ::sharePhoto,
         onFavoritePhoto = ::favoritePhoto,
@@ -271,6 +286,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        if (isFinishing) viewModel.recordExit()
         cancelScheduledCapture()
         rebindJob?.cancel()
         camera.release()
@@ -317,17 +333,28 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun prepareAndRebind() {
+        if (cameraOperationInProgress()) {
+            thermalRebindGate.onThermalChanged(true)
+            return
+        }
         val view = previewView ?: return
         rebindJob?.cancel()
         rebindJob = lifecycleScope.launch {
             try {
                 camera.prepare()
+                if (cameraOperationInProgress()) {
+                    thermalRebindGate.onThermalChanged(true)
+                    return@launch
+                }
                 val capabilities = camera.bind(
                     owner = this@MainActivity,
                     previewView = view,
                     requestedMode = viewModel.requestedMode(),
                     settings = viewModel.cameraSettings(),
-                    extras = { viewModel.extras(camera.hasTelephotoPreset()) },
+                    extras = {
+                        viewModel.setDisplayRotation(view.display?.rotation ?: 0)
+                        viewModel.extras(camera.hasTelephotoPreset())
+                    },
                     onSignals = viewModel::onFrame,
                     onLiveFallback = viewModel::onLiveFallback,
                     onBeautyFallback = viewModel::onBeautyFallback,
@@ -335,8 +362,10 @@ class MainActivity : ComponentActivity() {
                     onError = { viewModel.markCameraError(getString(R.string.camera_busy)) },
                 ) ?: return@launch
                 camera.setFlash(viewModel.ui.value.flashSetting)
-                viewModel.onExposureApplied(camera.setExposure(viewModel.currentEv()))
                 viewModel.onCameraReady(capabilities)
+                viewModel.onExposureSessionStarted()
+                if (capabilities.exposure.supported) camera.setExposure(viewModel.currentEv(), viewModel::onExposureResult)
+                viewModel.onInterruptedSaves(camera.recoveryFailures)
             } catch (error: Exception) {
                 viewModel.markCameraError(error.message ?: getString(R.string.camera_busy))
             }
@@ -429,6 +458,7 @@ class MainActivity : ComponentActivity() {
     private fun performCapture(spec: CaptureSpec) {
         camera.capture(
             spec = spec,
+            onCaptureAccepted = { viewModel.recordCaptureAccepted(spec) },
             onSaveProgress = viewModel::onSaveProgress,
             onSaved = { photo ->
                 if (viewModel.onPhotoCaptured(photo)) {
@@ -494,8 +524,9 @@ class MainActivity : ComponentActivity() {
             takenAtMillis = request.takenAtMillis,
             beautyPreset = request.beautyPreset,
             beautyEngineVersion = request.beautyEngineVersion,
-            onSaved = viewModel::onCreativeExported,
-            onError = viewModel::onCreativeExportFailed,
+            derivativeId = request.derivativeId,
+            onSaved = { viewModel.onCreativeExported(it, request.derivativeId) },
+            onError = { viewModel.onCreativeExportFailed(it, request.derivativeId); camera.loadRecoveryRecords(viewModel::onInterruptedSaves) },
         )
     }
 
@@ -510,7 +541,7 @@ class MainActivity : ComponentActivity() {
         when (val action = suggestion.action) {
             is ParameterAction.SetEv -> {
                 viewModel.applyUserEv(action.stops)
-                viewModel.onExposureApplied(camera.setExposure(action.stops))
+                camera.setExposure(action.stops, viewModel::onExposureResult)
             }
             is ParameterAction.FocusOnFace -> {
                 val face = viewModel.ui.value.overlay?.faceRects?.maxByOrNull { it.width() * it.height() }
@@ -547,9 +578,8 @@ class MainActivity : ComponentActivity() {
     private fun applySceneStart(request: SceneApplyRequest) {
         if (permissionState != PermissionState.GRANTED) return
         val preset = request.preferTelephoto?.let(camera::setTelephotoEnabled)
-        val appliedEv = request.evStops?.let(camera::setExposure)
         camera.setFlash(viewModel.ui.value.flashSetting)
-        viewModel.onSceneApplied(preset, appliedEv)
+        viewModel.onSceneApplied(preset)
         prepareAndRebind()
     }
 

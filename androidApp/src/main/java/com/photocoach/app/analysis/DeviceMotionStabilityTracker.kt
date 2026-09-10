@@ -15,8 +15,12 @@ internal class DeviceMotionStabilityTracker(
     private val gravity = FloatArray(3)
     private var initialized = false
     private var stableSamples = stableSamplesRequired
+    private var observedSamples = 0
+    val isObserved: Boolean get() = observedSamples >= stableSamplesRequired
 
     fun update(x: Float, y: Float, z: Float): Boolean {
+        if (!x.isFinite() || !y.isFinite() || !z.isFinite()) { reset(); return false }
+        observedSamples = (observedSamples + 1).coerceAtMost(stableSamplesRequired)
         val sample = floatArrayOf(x, y, z)
         if (!initialized) {
             sample.copyInto(gravity)
@@ -39,6 +43,7 @@ internal class DeviceMotionStabilityTracker(
     }
 
     fun reset() {
+        observedSamples = 0
         initialized = false
         stableSamples = stableSamplesRequired
         gravity.fill(0f)

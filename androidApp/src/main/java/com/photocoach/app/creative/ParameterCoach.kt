@@ -104,7 +104,7 @@ object ParameterCoach {
 
         val evDirection = when {
             signals.faceDarkerThanScene -> 1
-            signals.skyOverexposed -> -1
+            signals.skyOverexposed && signals.exposureReductionAllowed -> -1
             else -> 0
         }
         exactEvSuggestion(evDirection, context)?.let(::add)
@@ -244,7 +244,7 @@ object ParameterCoach {
         val steps = (TARGET_EV_DELTA / exposure.stepStops).roundToInt().coerceAtLeast(1)
         val target = exposure.clamp(context.currentEvStops + direction * steps * exposure.stepStops)
         if (abs(target - context.currentEvStops) < exposure.stepStops / 2f) return null
-        val reason = if (direction > 0) "人物脸部比环境暗" else "天空高光偏亮"
+        val reason = if (direction > 0) "人物脸部比环境暗" else "画面高光出现剪裁"
         return actionable(
             ParameterTarget.EV,
             "精确调整曝光",
@@ -270,7 +270,7 @@ object ParameterCoach {
     }
 
     private fun SuggestedMode.reason(signals: Signals): String = when (this) {
-        SuggestedMode.HDR -> "人物偏暗且天空偏亮，当前相机支持保留实时分析的 HDR"
+        SuggestedMode.HDR -> "人物偏暗且画面高光溢出，当前相机支持保留实时分析的 HDR"
         SuggestedMode.NIGHT -> "室内光线偏弱，当前相机支持保留实时分析的夜景模式"
         SuggestedMode.PORTRAIT -> if (signals.faceCount == 1) "检测到单人，当前相机支持保留实时分析的人像模式" else "当前相机支持人像模式"
         SuggestedMode.PHOTO -> "普通模式最稳妥"

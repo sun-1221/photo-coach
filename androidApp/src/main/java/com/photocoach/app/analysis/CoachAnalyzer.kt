@@ -67,6 +67,7 @@ class CoachAnalyzer(
     @Volatile private var closed = false
     private val lensObstructionDetector = LensObstructionDetector()
     private val temporalPoseTracker = TemporalPoseTracker()
+    private val faceMotionTracker = TemporalPoseTracker()
     private var lastAcceptedFrameMs = Long.MIN_VALUE
 
     private fun emitResult(timestampNs: Long, faces: List<Face>, pose: Pose?, backgroundEnabled: Boolean) {
@@ -100,12 +101,26 @@ class CoachAnalyzer(
         } else {
             temporalPoseTracker.update(poseMotionSample(pose, frame.timestampMs))
         }
+        val face = faces.singleOrNull()
+        val faceMotion = faceMotionTracker.update(face?.boundingBox?.let { box ->
+            PoseMotionSample(frame.timestampMs, box.exactCenterX(), box.exactCenterY(), 0f, 0f, box.width().toFloat())
+        })
+        val motion = if (face != null) faceMotion else temporal
+        val exposureKnown = face?.boundingBox?.let { box ->
+            frame.stats.lumaGrid?.let { grid -> FaceLuminanceClassifier.measureDarkerThanBackground(grid,
+                LumaRegion(box.left.toFloat(), box.top.toFloat(), box.right.toFloat(), box.bottom.toFloat())) }
+        } != null && frame.stats.meanY.isFinite() && frame.stats.highlightRatio.isFinite()
         onFrame(
-            signals.copy(
+            QualitySignalAssembler.assemble(signals.copy(
+                faceMetered = extra.faceMetered,
                 walkingMotionStable = temporal.walkingMotionStable,
-                subjectMotionHigh = temporal.subjectMotionHigh,
-            ),
-            overlay.fitCenter(frame.width, frame.height, targetWidth, targetHeight),
+                subjectMotionHigh = motion.subjectMotionHigh,
+            ), frame.observedAtMs, android.os.SystemClock.elapsedRealtime(),
+                faceVisibilityKnown = face?.leftEyeOpenProbability?.isFinite() == true &&
+                    face.rightEyeOpenProbability?.isFinite() == true && face.headEulerAngleY.isFinite(),
+                exposureKnown = exposureKnown, subjectMotionKnown = motion.motionObserved,
+                sensorAtMs = extra.sensorAtMs, focusAtMs = extra.focusAtMs),
+            overlay.fillCenter(frame.width, frame.height, targetWidth, targetHeight),
         )
     }
 
@@ -175,6 +190,9 @@ data class AnalyzerExtras(
     val hasTelephotoPreset: Boolean,
     val focusOnFace: Boolean,
     val handheldStable: Boolean = true,
+    val faceMetered: Boolean = false,
+    val sensorAtMs: Long? = null,
+    val focusAtMs: Long? = null,
 )
 
 private data class AnalysisFrame(
@@ -185,41 +203,43 @@ private data class AnalysisFrame(
     val timestampNs: Long,
     val sensorToAnalysis: BeautyTransform?,
     val lensObscured: Boolean,
+    val observedAtMs: Long = android.os.SystemClock.elapsedRealtime(),
 )
 
 internal fun rotatedAnalysisDimensions(width: Int, height: Int, rotationDegrees: Int): Pair<Int, Int> =
     if (rotationDegrees.mod(180) == 0) width to height else height to width
 
-internal data class FitCenterMapping(
+internal data class FillCenterMapping(
     val scale: Float,
     val offsetX: Float,
     val offsetY: Float,
 )
 
-internal fun fitCenterMapping(
+internal fun fillCenterMapping(
     sourceWidth: Int,
     sourceHeight: Int,
     targetWidth: Int,
     targetHeight: Int,
-): FitCenterMapping {
+): FillCenterMapping {
     if (sourceWidth <= 0 || sourceHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) {
-        return FitCenterMapping(1f, 0f, 0f)
+        return FillCenterMapping(1f, 0f, 0f)
     }
-    val scale = minOf(targetWidth.toFloat() / sourceWidth, targetHeight.toFloat() / sourceHeight)
-    return FitCenterMapping(
+    // PreviewView uses FILL_CENTER: map the same centered crop for overlays and tap hit testing.
+    val scale = maxOf(targetWidth.toFloat() / sourceWidth, targetHeight.toFloat() / sourceHeight)
+    return FillCenterMapping(
         scale = scale,
         offsetX = (targetWidth - sourceWidth * scale) / 2f,
         offsetY = (targetHeight - sourceHeight * scale) / 2f,
     )
 }
 
-private fun OverlayGeometry.fitCenter(
+private fun OverlayGeometry.fillCenter(
     sourceWidth: Int,
     sourceHeight: Int,
     targetWidth: Int,
     targetHeight: Int,
 ): OverlayGeometry {
-    val mapping = fitCenterMapping(sourceWidth, sourceHeight, targetWidth, targetHeight)
+    val mapping = fillCenterMapping(sourceWidth, sourceHeight, targetWidth, targetHeight)
     fun mapX(value: Float) = value * mapping.scale + mapping.offsetX
     fun mapY(value: Float) = value * mapping.scale + mapping.offsetY
     return copy(

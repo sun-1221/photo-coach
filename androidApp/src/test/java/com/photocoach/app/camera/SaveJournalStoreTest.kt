@@ -9,6 +9,25 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
 class SaveJournalStoreTest {
+    @Test fun legacySchemaFixturesPreserveOriginalKeysAndPublishedIdentityOnRetry() {
+        for (version in 1..3) {
+            val directory = temporaryDirectory.resolve("legacy-$version").toFile().apply { mkdirs() }
+            val fixture = requireNotNull(javaClass.getResource("/save-journal/v$version.json")).readText()
+            File(directory, "legacycapture001_S02.json").writeText(fixture)
+            val store = SaveJournalStore(directory)
+            val record = store.readAll().single()
+            assertEquals(version, record.schemaVersion)
+            assertEquals("legacycapture001_S02", record.key)
+            assertEquals(null, record.batchId)
+            assertEquals(null, record.derivativeId)
+            store.write(record.copy(stageRetryCounts = mapOf("RECIPE_WRITE" to 1)))
+            val retry = store.readAll().single()
+            assertEquals(record.originalUri, retry.originalUri)
+            assertEquals(record.completedStages, retry.completedStages)
+            assertEquals(record.key, retry.key)
+            assertEquals(1, directory.listFiles()!!.size)
+        }
+    }
     @Test
     fun journalCarriesVersionedVerificationAndRetryState() {
         val store = SaveJournalStore(temporaryDirectory.resolve("versioned-journals").toFile())

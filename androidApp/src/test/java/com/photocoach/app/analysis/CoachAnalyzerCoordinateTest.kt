@@ -11,11 +11,14 @@ class CoachAnalyzerCoordinateTest {
     }
 
     @Test
-    fun fitCenterKeepsAspectAndCentersLetterbox() {
-        val mapping = fitCenterMapping(960, 1280, 1440, 2400)
+    fun fillCenterMatchesPreviewCropForFaceTapHitTesting() {
+        val mapping = fillCenterMapping(960, 1280, 1440, 2400)
 
-        assertEquals(1.5f, mapping.scale)
-        assertEquals(0f, mapping.offsetX)
-        assertEquals(240f, mapping.offsetY)
+        assertEquals(1.875f, mapping.scale)
+        assertEquals(-180f, mapping.offsetX)
+        assertEquals(0f, mapping.offsetY)
+        // A face at the center maps to the actual visible center, without letterbox offset.
+        assertEquals(720f, 480f * mapping.scale + mapping.offsetX)
+        assertEquals(1200f, 640f * mapping.scale + mapping.offsetY)
     }
 }

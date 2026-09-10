@@ -88,25 +88,41 @@ import kotlinx.coroutines.launch
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val engine = CoachEngine.loadDefault()
-    private val guidance = GuidanceSession()
+    private val guidance = GuidanceSession(onCueEnded = { cue, reason, _ ->
+        recordEvent("cue_ended", reason, cueOverride = cue.sourceId ?: cue.id.name.lowercase())
+    })
     private val eventLogger = ResearchEventLogger(File(application.filesDir, "research/p-minus-one-events.jsonl"))
     private val preferences = ViewfinderPreferenceController(application)
     private val initialSettings = preferences.initialCameraSettings
     private val initialStylePreferences = preferences.initialStylePreferences
     private val sessionStartedAtMs = now()
+    private val researchSessionId = java.util.UUID.randomUUID().toString()
+    private var cameraReadyRecorded = false
+    private var exitRecorded = false
+    private var trackedRoundId = -1
+    private var roundOperableAtMs = 0L
+    private var roundPublished = false
+    private var roundTimeoutRecorded = false
+    private val captureEvents = com.photocoach.app.research.CaptureEventLedger()
+    private val researchEvents = kotlinx.coroutines.channels.Channel<ResearchEvent>(256)
+    private val researchWriter = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
     private val sensorManager = application.getSystemService(SensorManager::class.java)
     private val gravity = FloatArray(3)
+    @Volatile private var displayRotation = 0
+    @Volatile private var sensorObservedAtMs: Long? = null
+    fun setDisplayRotation(rotation: Int) { displayRotation = rotation }
     private val motionStabilityTracker = DeviceMotionStabilityTracker()
     @Volatile private var handheldStable: Boolean = true
     private var lastEvalAtMs = 0L
     private var lastSignals = Signals()
     private var lastSceneAppliedRound = -1
-    private var evUserLocked = false
+    private var confirmedEvStops = 0f
     private var zoomUserLocked = false
     private var controlQuietUntilMs = 0L
     private val faceFocusSignal = FaceFocusSignalState()
     private var lastLoggedStage = ""
     private val creativeCapture = CreativeCaptureSession()
+    private val recoveryInbox = com.photocoach.app.camera.RecoveryInbox()
     private val poseGuidance = PoseGuidanceReducer()
     private val analyzedFrames = MutableSharedFlow<AnalyzedFrame>(
         replay = 1,
@@ -148,14 +164,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             gravity[0] = event.values[0]
             gravity[1] = event.values[1]
             gravity[2] = event.values[2]
-            tiltDegrees = Math.toDegrees(kotlin.math.atan2(gravity[0], gravity[1]).toDouble()).toFloat()
+            tiltDegrees = com.photocoach.app.analysis.displayRoll(gravity[0], gravity[1], gravity[2], displayRotation)
             handheldStable = motionStabilityTracker.update(event.values[0], event.values[1], event.values[2])
+            sensorObservedAtMs = if (motionStabilityTracker.isObserved) now() else null
         }
 
         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
     }
 
     init {
+        researchWriter.launch {
+            for (event in researchEvents) {
+                if (!eventLogger.record(event)) _ui.update { it.copy(researchEvidenceIncomplete = true) }
+            }
+        }
         sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
             sensorManager.registerListener(tiltListener, it, SensorManager.SENSOR_DELAY_UI)
         }
@@ -167,7 +189,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 delay(100)
                 val before = guidance.snapshot()
                 guidance.tick(now())
-                val after = guidance.snapshot()
+                  val after = guidance.snapshot()
+                  observeResearchRound(after)
                 if (before != after) {
                     if (after.roundId != before.roundId) resetPhotoControls()
                     emitGuidance()
@@ -181,10 +204,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         tiltDegrees = tiltDegrees,
         hasTelephotoPreset = hasTelephotoPreset,
         focusOnFace = faceFocusSignal.focusOnFace,
+        faceMetered = faceFocusSignal.faceMetered,
         handheldStable = handheldStable,
+        sensorAtMs = sensorObservedAtMs,
+        focusAtMs = faceFocusSignal.observedAtMs,
     )
 
     fun onCameraReady(capabilities: CameraCapabilities) {
+        faceFocusSignal.reset()
         guidance.onCameraReady(now())
         val preferredMode = _ui.value.modePreference.requestedMode
         val unsupportedPreference = preferredMode != null && preferredMode !in capabilities.availableModes
@@ -214,7 +241,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         if (unsupportedPreference) persistSettings()
-        recordEvent("camera_ready")
+        observeResearchRound(guidance.snapshot())
+        recordEvent(if (cameraReadyRecorded) "camera_rebound" else "camera_ready")
+        cameraReadyRecorded = true
     }
 
     fun onFrame(signals: Signals, overlay: OverlayGeometry) {
@@ -254,7 +283,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         ) else null
         val raw = if (technique == null) baseRaw else baseRaw.copy(
             cues = (baseRaw.cues + Cue(
-                id = CueId.P1_TECHNIQUE,
+                id = technique.cueId,
                 text = technique.text,
                 audience = technique.audience,
                 channel = when (technique.category) {
@@ -276,6 +305,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         guidance.onCandidates(filtered, signals, nowMs)
         val poseState = if (_ui.value.selectedPoseCategory != null) poseGuidance.update(signals, nowMs) else PoseGuidanceState.Disabled
+        val poseCandidate = (poseState as? PoseGuidanceState.CueActive)?.cue
+        guidance.offerOptionalPose(poseCandidate?.text, poseCandidate?.id)
         maybeQueueSceneStart(filtered)
         val parameterSuggestions = ParameterCoach.suggest(
             signals = signals,
@@ -362,6 +393,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun cueForSpeech() = guidance.takeCueForSpeech(now())
+
+    fun setParameterPanelOpen(open: Boolean) {
+        guidance.setOutputPaused(open, now())
+        _ui.update { it.copy(parameterPanelOpen = open, guidance = guidance.snapshot()) }
+    }
 
     fun onPlaybackFinished() {
         reduceOnMain {
@@ -491,6 +527,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 beautyPreviewWarning = null,
                 flashSetting = FlashSetting.OFF,
                 countdownSeconds = null,
+                evStops = 0f,
+                exposurePending = false,
                 controlMessage = "相机设置已恢复默认",
                 ttsFailed = false,
             )
@@ -667,6 +705,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onFocusResult(success: Boolean, locked: Boolean) {
+        faceFocusSignal.onResult(success, now())
         _ui.update { state ->
             state.copy(
                 focusIndicator = state.focusIndicator?.copy(
@@ -683,6 +722,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onFocusUnlocked() {
+        faceFocusSignal.reset()
         _ui.update {
             it.copy(
                 focusIndicator = null,
@@ -704,14 +744,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun applyUserEv(stops: Float) {
-        evUserLocked = true
         controlQuietUntilMs = now() + CONTROL_QUIET_MS
         val snapped = (stops * 10f).roundToInt() / 10f
-        _ui.update { it.copy(evStops = it.exposureCapability.clamp(snapped)) }
+        _ui.update { it.copy(evStops = it.exposureCapability.clamp(snapped), exposurePending = true, exposureFailed = false,
+            controlMessage = "正在调整曝光") }
     }
 
-    fun onExposureApplied(stops: Float) {
-        _ui.update { it.copy(evStops = it.exposureCapability.clamp(stops)) }
+    fun onExposureSessionStarted() {
+        confirmedEvStops = 0f
+        _ui.update { it.copy(exposurePending = it.exposureCapability.supported, exposureFailed = false) }
+    }
+
+    fun onExposureResult(result: Result<Float>) {
+        result.fold(onSuccess = { stops ->
+            confirmedEvStops = stops
+            _ui.update { it.copy(evStops = it.exposureCapability.clamp(stops), exposurePending = false, exposureFailed = false,
+                controlMessage = if (it.exposurePending) "曝光已调整" else it.controlMessage) }
+        }, onFailure = {
+            _ui.update { it.copy(evStops = it.exposureCapability.clamp(confirmedEvStops), exposurePending = false, exposureFailed = true,
+                controlMessage = "曝光调整失败，当前曝光未确认；请重试") }
+        })
     }
 
     fun onUserFocalChanged(preset: QuickFocalPreset) {
@@ -732,14 +784,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _ui.update { it.copy(controlMessage = "${rounded}x") }
     }
 
-    fun onSceneApplied(preset: QuickFocalPreset?, evStops: Float?) {
+    fun onSceneApplied(preset: QuickFocalPreset?) {
         _ui.update {
             it.copy(
                 selectedFocalId = preset?.cameraId ?: it.selectedFocalId,
-                evStops = evStops ?: it.evStops,
                 controlMessage = when {
                     preset != null && preset.cameraId != it.selectedFocalId -> "已切到 ${preset.label}"
-                    evStops != null -> "已设置起始曝光"
                     else -> it.controlMessage
                 },
             )
@@ -783,7 +833,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     guidance = guidance.snapshot(),
                     shutterPulse = it.shutterPulse + 1,
-                    burstProgress = if (creativeCapture.isBurst) 0 else null,
+                      burstProgress = if (creativeCapture.isBurst) 0 else null,
+                      remainingBurstShots = 0,
                     creativeResult = null,
                     creativeResultVisible = false,
                     saveStatusText = "正在捕获原片",
@@ -796,6 +847,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun activeCaptureStyle(): CreativeStyle = creativeCapture.style
+    fun recordCaptureAccepted(spec: CaptureSpec) { recordEvent("capture_accepted", spec.captureId.value) }
 
     fun activeCaptureSpec(): CaptureSpec? {
         val state = _ui.value
@@ -812,20 +864,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 (face.bottom / overlay.canvasHeight).coerceIn(0f, 1f),
             )
         }.getOrNull() else null
-        return creativeCapture.nextCaptureSpec(portraitRegion)
+        return creativeCapture.nextCaptureSpec(portraitRegion)?.also {
+            val context = guidance.snapshot()
+            captureEvents.register(it.captureId.value, context.roundId, context.intent.name.lowercase(), stageName(context.stage))
+        }
     }
 
     /** Returns true when the Activity should submit the next shot in the same explicit batch. */
     fun onPhotoCaptured(photo: CapturedPhoto): Boolean {
         if (
-            _ui.value.guidance.stage !is GuidanceStage.Capturing ||
+            !creativeCapture.owns(photo.captureId) ||
             creativeCapture.isComplete
         ) {
             return false
         }
         val item = creativeCapture.record(photo)
         photo.warning?.let(::showControlMessage)
-        if (creativeCapture.hasMoreShots) {
+        recordOriginalPublished(photo.captureId.value)
+        if (creativeCapture.hasMoreShots && !creativeCapture.paused) {
             _ui.update { it.copy(burstProgress = creativeCapture.capturedCount) }
             return true
         }
@@ -851,6 +907,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 guidance = guidance.snapshot(),
                 recentPhoto = recommended.displayUri,
                 burstProgress = null,
+                remainingBurstShots = if (creativeCapture.paused) creativeCapture.remainingCount else 0,
                 saveStatusText = saveOutcomeText,
                 savePartialSuccess = false,
                 creativeResult = CreativeResultUi(
@@ -859,6 +916,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     selectedId = recommendedId,
                     recommendationReason = reason,
                     isBurst = creativeCapture.isBurst,
+                    edit = creativeCapture.resetEditing(recommendedId).edit,
                     message = buildList {
                         addAll(photos.mapNotNull(CreativePhotoUi::warning))
                         if (photos.any(CreativePhotoUi::effectWasDownsampled)) {
@@ -896,7 +954,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun selectCreativePhoto(id: String) {
         val result = _ui.value.creativeResult ?: return
         val selected = result.photos.firstOrNull { it.id == id } ?: return
-        val editing = creativeCapture.resetEditing()
+        val editing = creativeCapture.resetEditing(id)
         _ui.update {
             it.copy(
                 recentPhoto = selected.displayUri,
@@ -962,9 +1020,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             _ui.update { it.copy(creativeResult = result.copy(message = "设备温度过高，暂不开始新的效果导出；原片不受影响")) }
             return null
         }
-        _ui.update { it.copy(creativeResult = result.copy(exportInProgress = true, message = "正在另存副本")) }
+        val derivativeId = com.photocoach.app.creative.CaptureIdentity.create().value
+        _ui.update { it.copy(creativeResult = result.copy(exportInProgress = true, exportingId = derivativeId, message = "正在另存新副本")) }
         return CreativeExportRequest(
             source = result.selectedPhoto.originalUri.toUri(),
+            derivativeId = derivativeId,
             edit = result.edit,
             captureId = CaptureId(result.selectedPhoto.captureId),
             sequence = result.selectedPhoto.sequence,
@@ -989,13 +1049,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun onCreativeExported(copy: ExportedCopy) {
+    fun beginExportRetry(): String? {
+        val result = _ui.value.creativeResult ?: return null
+        if (result.exportInProgress) return null
+        val id = result.failedExportId ?: return null
+        _ui.update { it.copy(creativeResult = result.copy(exportInProgress = true, exportingId = id)) }
+        return id
+    }
+
+    fun onCreativeExported(copy: ExportedCopy, derivativeId: String? = _ui.value.creativeResult?.exportingId) {
         val result = _ui.value.creativeResult ?: return
+        if (result.exportingId != derivativeId) return
         _ui.update {
             it.copy(
                 recentPhoto = copy.uri.toString(),
                 creativeResult = result.copy(
                     exportInProgress = false,
+                    exportingId = null,
+                    failedExportId = if (result.failedExportId == derivativeId) null else result.failedExportId,
                     message = listOfNotNull(
                         if (copy.wasDownsampled) "已另存副本（为控制内存已适度降采样），原片未改动" else "已另存副本，原片未改动",
                         copy.warning,
@@ -1005,10 +1076,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun onCreativeExportFailed(error: Throwable) {
+    fun onCreativeExportFailed(error: Throwable, derivativeId: String? = _ui.value.creativeResult?.exportingId) {
         val result = _ui.value.creativeResult ?: return
+        if (result.exportingId != derivativeId) return
         _ui.update {
-            it.copy(creativeResult = result.copy(exportInProgress = false, message = error.message ?: "另存副本失败，原片未改动"))
+            it.copy(creativeResult = result.copy(exportInProgress = false, exportingId = null, failedExportId = derivativeId,
+                message = error.message ?: "另存副本失败；可重试原配方或明确另存新副本"))
         }
     }
 
@@ -1017,6 +1090,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun onSaveFailed(error: Throwable, retryAvailable: Boolean) {
+        if (retryAvailable) creativeCapture.markSourceCaptured() else creativeCapture.captureFailed()
         val partial = error as? PartialSaveException
         if (partial != null) {
             _ui.update {
@@ -1029,9 +1103,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (creativeCapture.isBurst) {
             val completed = creativeCapture.capturedCount + if (partial != null) 1 else 0
-            val message = "三张连拍在第 ${completed + 1} 张中断，已保留 $completed 张：${error.message ?: "保存失败"}"
+            val message = "连拍已暂停：已捕获 ${creativeCapture.sourceCount} 张 / 已保存 $completed 张：${error.message ?: "保存失败"}"
             creativeCapture.failBurst(message)
             guidance.onSaveFailed(message, retryAvailable)
+            _ui.update { it.copy(remainingBurstShots = if (retryAvailable) 0 else creativeCapture.remainingCount) }
             emitGuidance()
             recordEvent("save", if (retryAvailable) "burst_failed_retryable" else "burst_failed")
             return
@@ -1041,7 +1116,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         recordEvent("save", if (retryAvailable) "failed_retryable" else "capture_failed")
     }
 
-    fun onSaveProgress(snapshot: SaveSnapshot) {
+    private fun recordOriginalPublished(captureId: String) {
+        captureEvents.published(captureId)?.let { context ->
+            if (context.roundId == trackedRoundId) roundPublished = true
+            recordEvent("original_published", captureId, context.roundId, context.intent, context.stage)
+        }
+    }
+
+    fun onSaveProgress(progress: com.photocoach.app.camera.CaptureSaveProgress) {
+        val snapshot = progress.snapshot
+        if (SaveStage.ORIGINAL_PUBLISH in snapshot.completed) recordOriginalPublished(progress.captureId)
+        if (progress.captureId != creativeCapture.activeCaptureId) return
+        creativeCapture.markSourceCaptured()
         val nextStage = snapshot.nextStage
         val status = when {
             snapshot.failedStage != null && snapshot.isPartialSuccess ->
@@ -1064,11 +1150,32 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         return accepted
     }
 
+    fun onInterruptedSaves(records: List<com.photocoach.app.camera.SaveJournal>) {
+        recoveryInbox.refresh(records)
+        _ui.update { it.copy(interruptedSaveCount = records.size, recoveryRecords = records, recoveryBusy = false) }
+    }
+
+    fun showRecovery(open: Boolean) { recoveryInbox.show(open); _ui.update { it.copy(recoveryPanelOpen = open) } }
+    fun beginRecoveryRetry(key: String): Boolean {
+        if (!recoveryInbox.beginRetry(key)) return false
+        _ui.update { it.copy(recoveryBusy = true) }
+        return true
+    }
+
     fun abandonSaveFailure() {
         guidance.abandonSaveFailure(now())
         resetPhotoControls()
         emitGuidance()
         recordEvent("save_failure_abandoned")
+        _ui.update { it.copy(remainingBurstShots = 0) }
+    }
+
+    fun continueBurst(): Boolean {
+        if (_ui.value.cameraError != null || !creativeCapture.continueRemaining()) return false
+        guidance.abandonSaveFailure(now())
+        if (!guidance.onShutter(now())) return false
+        _ui.update { it.copy(guidance = guidance.snapshot(), remainingBurstShots = 0) }
+        return true
     }
 
     fun markCameraError(message: String?) {
@@ -1097,7 +1204,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 sceneApply = SceneApplyRequest(
                     mode = params.mode,
                     preferTelephoto = if (zoomUserLocked) null else params.preferTelephoto,
-                    evStops = if (evUserLocked) null else params.evBias,
                     generation = generation,
                 ),
             )
@@ -1105,7 +1211,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun resetPhotoControls() {
-        evUserLocked = false
+        // Manual exposure survives successive photos in this camera session.
         zoomUserLocked = false
         lastSceneAppliedRound = -1
         faceFocusSignal.reset()
@@ -1113,6 +1219,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun emitGuidance() {
         _ui.update { it.copy(guidance = guidance.snapshot()) }
+        observeResearchRound(guidance.snapshot())
+        logStageIfChanged()
+    }
+
+    private fun observeResearchRound(snapshot: com.photocoach.coach.GuidanceSnapshot) {
+        if (snapshot.stage is GuidanceStage.Initializing) return
+        if (trackedRoundId != snapshot.roundId) {
+            trackedRoundId = snapshot.roundId
+            roundOperableAtMs = now()
+            roundPublished = false
+            roundTimeoutRecorded = false
+            recordEvent("round_operable")
+        }
+        if (!roundPublished && !roundTimeoutRecorded && now() - roundOperableAtMs >= 30_000L) {
+            roundTimeoutRecorded = true
+            recordEvent("round_timeout", "original_not_published_within_30s")
+        }
     }
 
     private fun reduceOnMain(block: () -> Unit) {
@@ -1126,25 +1249,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun logStageIfChanged() {
-        val stageName = stageName(guidance.snapshot().stage)
+        val snapshot = guidance.snapshot()
+        val stageName = "${snapshot.roundId}:${stageName(snapshot.stage)}:${snapshot.currentCue?.sourceId ?: snapshot.currentCue?.id}:${snapshot.currentCue?.text}"
         if (stageName == lastLoggedStage) return
         lastLoggedStage = stageName
         recordEvent("stage")
     }
 
-    private fun recordEvent(type: String, result: String? = null) {
+    private fun recordEvent(type: String, result: String? = null, roundOverride: Int? = null,
+        intentOverride: String? = null, stageOverride: String? = null, cueOverride: String? = null) {
         val snapshot = guidance.snapshot()
         val event = ResearchEvent(
             type = type,
             occurredAtMs = System.currentTimeMillis(),
             elapsedMs = now() - sessionStartedAtMs,
-            intent = snapshot.intent.name.lowercase(),
-            roundId = snapshot.roundId,
-            stage = stageName(snapshot.stage),
-            cueId = snapshot.currentCue?.id?.name?.lowercase(),
+            intent = intentOverride ?: snapshot.intent.name.lowercase(),
+            roundId = roundOverride ?: snapshot.roundId,
+            stage = stageOverride ?: stageName(snapshot.stage),
+            cueId = cueOverride ?: snapshot.currentCue?.let { it.sourceId ?: it.id.name.lowercase() },
             result = result,
+            sessionId = researchSessionId,
         )
-        viewModelScope.launch(Dispatchers.IO) { eventLogger.record(event) }
+        if (!researchEvents.trySend(event).isSuccess) _ui.update { it.copy(researchEvidenceIncomplete = true) }
+    }
+
+    fun recordExit() {
+        if (exitRecorded) return
+        exitRecorded = true
+        recordEvent("session_exit", "user_exit")
     }
 
     private fun persistSettings() {
@@ -1165,6 +1297,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun now(): Long = SystemClock.elapsedRealtime()
 
     override fun onCleared() {
+        researchEvents.close()
         sensorManager.unregisterListener(tiltListener)
         motionStabilityTracker.reset()
         super.onCleared()

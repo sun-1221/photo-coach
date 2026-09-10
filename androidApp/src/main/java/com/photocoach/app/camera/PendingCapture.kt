@@ -13,7 +13,7 @@ internal data class PendingCapture(
     val spec: CaptureSpec,
     val onSaved: (CapturedPhoto) -> Unit,
     val onSaveError: (Throwable) -> Unit,
-    val onSaveProgress: (SaveSnapshot) -> Unit,
+    val onSaveProgress: (CaptureSaveProgress) -> Unit,
     val shutterElapsedMs: Long,
     val recordingStartedElapsedMs: Long,
     val warnings: MutableList<String> = mutableListOf(),
@@ -53,6 +53,7 @@ internal data class PendingCapture(
 
     fun toJournal(): SaveJournal = SaveJournal(
         captureId = spec.captureId.value,
+        batchId = spec.batchId,
         sequence = spec.sequence,
         takenAtMillis = spec.takenAtMillis,
         sourcePath = file.absolutePath,

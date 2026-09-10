@@ -43,14 +43,15 @@ object SignalFactory {
                 ),
             )
         } ?: FaceDetailSignals()
-        val faceDarker = largest?.boundingBox?.let { box ->
+        val faceBrightnessComparison = largest?.boundingBox?.let { box ->
             stats.lumaGrid?.let { grid ->
-                FaceLuminanceClassifier.isDarkerThanBackground(
+                FaceLuminanceClassifier.measureDarkerThanBackground(
                     grid,
                     LumaRegion(box.left.toFloat(), box.top.toFloat(), box.right.toFloat(), box.bottom.toFloat()),
                 )
             }
-        } == true
+        }
+        val faceDarker = faceBrightnessComparison == true
         // FaceDetection is sensitive to phones, masks and reflected faces. Pose already
         // represents one prominent person, so keep its reliable upper-body signal unless
         // FaceDetection explicitly proves this is a multi-person frame.
@@ -118,7 +119,9 @@ object SignalFactory {
             shouldersSquare = poseSignals.shouldersSquare,
             shouldersRaised = poseSignals.shouldersRaised,
             handsIdle = poseSignals.handsNeedPlacement,
-            skyOverexposed = stats.topMean > 200f,
+            skyOverexposed = com.photocoach.coach.ExposureGuidancePolicy.hasClipping(stats.highlightRatio),
+            exposureReductionAllowed = com.photocoach.coach.ExposureGuidancePolicy.shouldLower(stats.highlightRatio,
+                if (faces.size == 1) faceBrightnessComparison else faceDarker),
             subjectCutOff = subjectCutOff,
             lensObscured = lensObscured,
             faceReliable = faces.size == 1,

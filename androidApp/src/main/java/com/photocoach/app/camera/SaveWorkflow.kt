@@ -10,6 +10,8 @@ enum class SaveStage {
     COMPLETE,
 }
 
+data class CaptureSaveProgress(val captureId: String, val snapshot: SaveSnapshot)
+
 data class SavePlan(
     val motionPhotoRequested: Boolean,
     val derivativeRequested: Boolean,
@@ -67,14 +69,15 @@ class SaveCoordinator(initial: SaveSnapshot) {
     }
 
     fun fallbackFromMotionPhoto(error: String): SaveSnapshot {
-        require(snapshot.nextStage == SaveStage.MOTION_PACKAGE)
+        require(snapshot.nextStage == SaveStage.MOTION_PACKAGE ||
+            snapshot.nextStage == SaveStage.ORIGINAL_PUBLISH && SaveStage.ORIGINAL_PUBLISH !in snapshot.completed)
         val fallbackPlan = SavePlan(
             motionPhotoRequested = false,
             derivativeRequested = snapshot.plan.derivativeRequested,
         )
         snapshot = SaveSnapshot(
             plan = fallbackPlan,
-            completed = snapshot.completed,
+            completed = snapshot.completed - SaveStage.MOTION_PACKAGE,
             error = error,
             motionPhotoFallback = true,
         )

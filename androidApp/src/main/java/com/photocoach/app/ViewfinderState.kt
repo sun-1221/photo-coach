@@ -39,7 +39,6 @@ data class FocusIndicator(
 data class SceneApplyRequest(
     val mode: SuggestedMode,
     val preferTelephoto: Boolean?,
-    val evStops: Float?,
     val generation: Int,
 )
 
@@ -55,6 +54,7 @@ data class CreativePhotoUi(
     val isMotionPhoto: Boolean = false,
     val beautyPreset: BeautyPreset = BeautyPreset.OFF,
     val beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
+    val edit: EditAdjustment = EditAdjustment(),
 )
 
 data class CreativeResultUi(
@@ -69,6 +69,8 @@ data class CreativeResultUi(
     val canReset: Boolean = false,
     val compareOriginal: Boolean = false,
     val exportInProgress: Boolean = false,
+    val exportingId: String? = null,
+    val failedExportId: String? = null,
     val message: String? = null,
 ) {
     val selectedPhoto: CreativePhotoUi get() = photos.first { it.id == selectedId }
@@ -82,13 +84,21 @@ data class CreativeExportRequest(
     val takenAtMillis: Long,
     val beautyPreset: BeautyPreset = BeautyPreset.OFF,
     val beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
+    val derivativeId: String = com.photocoach.app.creative.CaptureIdentity.create().value,
 )
 
 data class ViewfinderUi(
     val guidance: GuidanceSnapshot,
+    val researchEvidenceIncomplete: Boolean = false,
+    val interruptedSaveCount: Int = 0,
+    val recoveryRecords: List<com.photocoach.app.camera.SaveJournal> = emptyList(),
+    val recoveryPanelOpen: Boolean = false,
+    val recoveryBusy: Boolean = false,
     val coach: CoachOutput? = null,
     val overlay: OverlayGeometry? = null,
     val evStops: Float = 0f,
+    val exposurePending: Boolean = false,
+    val exposureFailed: Boolean = false,
     val focalPresets: List<QuickFocalPreset> = emptyList(),
     val selectedFocalId: String? = null,
     val exposureCapability: ExposureCapability = ExposureCapability(),
@@ -132,7 +142,9 @@ data class ViewfinderUi(
     val saveStatusText: String? = null,
     val savePartialSuccess: Boolean = false,
     val burstProgress: Int? = null,
+    val remainingBurstShots: Int = 0,
     val parameterSuggestions: List<ParameterSuggestion> = emptyList(),
+    val parameterPanelOpen: Boolean = false,
     val creativeResult: CreativeResultUi? = null,
     val creativeResultVisible: Boolean = false,
     val thermalLevel: ThermalLevel = ThermalLevel.UNKNOWN,

@@ -180,8 +180,8 @@ class CreativeImageProcessor(
 
     private fun decodeUri(resolver: ContentResolver, source: Uri, pixelLimit: Long, mutable: Boolean = false): DecodedBitmap {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        resolver.openInputStream(source)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-            ?: throw IOException("无法读取原片")
+        val boundsStream = resolver.openInputStream(source) ?: throw IOException("无法读取原片")
+        boundsStream.use { BitmapFactory.decodeStream(it, null, bounds) }
         validateBounds(bounds)
         val sample = ImageDecodePolicy.inSampleSize(bounds.outWidth, bounds.outHeight, pixelLimit)
         val bitmap = try {

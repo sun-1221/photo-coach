@@ -15,6 +15,44 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class InterruptedSaveRecoveryTest {
+    @Test fun legacySchemasRecoverOriginalKeyAndNeverRepublishAfterRecipeFailure() {
+        for (schema in 1..3) fixture { f ->
+            f.recipes.writeText("block recipe directory")
+            val legacy = f.record.copy(schemaVersion = schema, motionPhotoRequested = false, packagedPath = null,
+                displayName = f.originalName, completedStages = setOf(SaveStage.SPACE_CHECK.name))
+            f.journals.write(legacy)
+            f.recovery().recover()
+            val failed = f.journals.readAll().single()
+            assertEquals(legacy.key, failed.key)
+            assertNull(failed.batchId)
+            val original = Uri.parse(requireNotNull(failed.originalUri)); f.published += original
+            f.recovery().recover()
+            assertEquals(original.toString(), f.journals.readAll().single().originalUri)
+            assertEquals(listOf(original), f.rows())
+            f.recipes.delete()
+            f.recovery().recover()
+            assertEquals(listOf(original), f.rows())
+            assertTrue(f.journals.readAll().isEmpty())
+        }
+    }
+
+    @Test fun completedExplicitExportOnlyVerifiesAndCleansOnRecoveryAndStaleRetry() = fixture { f ->
+        val original = CaptureSaver.publish(f.resolver, f.source, f.originalName, f.time, motionPhoto = false)
+        f.published += original
+        val derivative = CaptureIdentity.create()
+        val request = f.record.copy(motionPhotoRequested = false, packagedPath = null, sourcePath = "",
+            completedStages = emptySet(), derivativeId = derivative.value, exportSourceUri = original.toString(),
+            displayName = CaptureIdentity.displayName(derivative, CaptureAssetKind.EDITED, 1, f.time))
+        val saved = f.recovery().createExport(request); f.published += saved.uri
+        val complete = f.journals.read(request)!!
+        assertNotNull(complete.derivativeUri)
+        // A completed journal and stale request coexist after process restart.
+        f.recovery().recover()
+        val retried = f.recovery().recoverExport(request)
+        assertEquals(saved.uri, retried.uri)
+        assertArrayEquals(f.originalBytes, f.resolver.openInputStream(original)!!.use { it.readBytes() })
+        assertEquals(SaveStage.COMPLETE.name, f.journals.read(request)!!.completedStages.last())
+    }
     @Test fun corruptMotionFallsBackOnceAndSurvivesAnotherInterruptedStage() = fixture { f ->
         f.recipes.writeText("block recipe directory")
         f.journals.write(f.record)

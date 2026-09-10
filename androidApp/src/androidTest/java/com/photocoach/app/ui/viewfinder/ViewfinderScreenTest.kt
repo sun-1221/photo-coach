@@ -69,6 +69,33 @@ import org.junit.runner.RunWith
 class ViewfinderScreenTest {
     @get:Rule
     val compose = createComposeRule()
+    @Test
+    fun brightnessCanBeOpenedWithoutTappingFaceAndRemainsAvailable() {
+        render(ui(GuidanceStage.Ready(optionalAvailable = false)).copy(
+            exposureCapability = ExposureCapability(-2f, 2f, .333f), showEv = false,
+        ))
+        compose.onNodeWithTag("exposure_control").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("ev_slider").assertIsDisplayed()
+        compose.mainClock.advanceTimeBy(5000)
+        compose.onNodeWithTag("ev_slider").assertIsDisplayed()
+        compose.onNodeWithTag("ev_reset").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("exposure_control").performClick()
+        compose.onAllNodesWithTag("ev_slider").assertCountEquals(0)
+        compose.onNodeWithTag("shutter").assertIsEnabled()
+    }
+
+    @Test
+    fun selectedBeautyShowsActualGateOutsideMenu() {
+        render(ui(GuidanceStage.Ready(optionalAvailable = false)).copy(
+            beautyPreset = BeautyPreset.NATURAL,
+            beautyPreviewState = com.photocoach.app.beauty.BeautyPreviewState.WAITING_FACE,
+            thermalLevel = com.photocoach.app.camera.ThermalLevel.NORMAL,
+        ))
+        compose.onNodeWithText(com.photocoach.app.beauty.BeautyPreviewState.WAITING_FACE.text)
+            .assertIsDisplayed()
+        compose.onNodeWithTag("shutter").assertIsEnabled()
+    }
+
 
     @Test
     fun requiredStepKeepsSkipAndShutterReachable() {

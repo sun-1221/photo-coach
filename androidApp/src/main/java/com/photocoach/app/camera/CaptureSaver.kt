@@ -27,8 +27,23 @@ object CaptureSaver {
         motionPhoto: Boolean = displayName.contains("MP.", ignoreCase = true),
         onAssetStage: ((AssetPublishStage) -> Unit)? = null,
         onPendingCreated: ((Uri) -> Unit)? = null,
+        existingUri: Uri? = null,
     ): Uri {
         require(source.isFile && source.length() > 0L) { "captured photo is empty" }
+        if (existingUri != null) {
+            val exists = rowExists(resolver, existingUri)
+            if (exists) {
+                // Never overwrite an already published asset on a retry.
+                val verified = runCatching {
+                    PublishedAssetVerifier.verifyPublished(resolver, existingUri, displayName, RELATIVE_DIR, motionPhoto)
+                }.isSuccess
+                if (verified) {
+                    onAssetStage?.invoke(AssetPublishStage.VERIFY_PUBLISHED)
+                    return existingUri
+                }
+                deleteConfirmed(resolver, existingUri)
+            }
+        }
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
             put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
@@ -44,9 +59,10 @@ object CaptureSaver {
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         }
         val uri = resolver.insert(collection, values) ?: throw IOException("cannot create MediaStore row")
+        var publishedVerified = false
         try {
-            onAssetStage?.invoke(AssetPublishStage.MEDIASTORE_INSERT_PENDING)
             onPendingCreated?.invoke(uri)
+            onAssetStage?.invoke(AssetPublishStage.MEDIASTORE_INSERT_PENDING)
             writePending(resolver, uri, source)
             onAssetStage?.invoke(AssetPublishStage.ORIGINAL_COPY)
             PublishedAssetVerifier.verifyPending(resolver, uri, motionPhoto)
@@ -54,10 +70,12 @@ object CaptureSaver {
             commit(resolver, uri)
             onAssetStage?.invoke(AssetPublishStage.MEDIASTORE_COMMIT)
             PublishedAssetVerifier.verifyPublished(resolver, uri, displayName, RELATIVE_DIR, motionPhoto)
+            publishedVerified = true
             onAssetStage?.invoke(AssetPublishStage.VERIFY_PUBLISHED)
             return uri
         } catch (error: Throwable) {
-            resolver.delete(uri, null, null)
+            // The caller's journal retains this identity even if cleanup is refused.
+            if (!publishedVerified) runCatching { deleteConfirmed(resolver, uri) }.exceptionOrNull()?.let(error::addSuppressed)
             throw error
         }
     }
@@ -72,12 +90,23 @@ object CaptureSaver {
         onAssetStage: ((AssetPublishStage) -> Unit)? = null,
     ): Uri {
         require(source.isFile && source.length() > 0L) { "captured photo is empty" }
+        if (runCatching {
+            PublishedAssetVerifier.verifyPublished(resolver, uri, displayName, RELATIVE_DIR, motionPhoto)
+        }.isSuccess) {
+            onAssetStage?.invoke(AssetPublishStage.VERIFY_PUBLISHED)
+            return uri
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+            resolver.query(uri, arrayOf(MediaStore.Images.Media.IS_PENDING), null, null, null)
+                ?.use { it.moveToFirst() && it.getInt(0) == 1 } != true) {
+            throw IOException("原行不是可续写的 pending 资产；需确认清理后重试")
+        }
         if (!pendingAlreadyVerified) {
             writePending(resolver, uri, source)
             onAssetStage?.invoke(AssetPublishStage.ORIGINAL_COPY)
-            PublishedAssetVerifier.verifyPending(resolver, uri, motionPhoto)
-            onAssetStage?.invoke(AssetPublishStage.VERIFY_PENDING)
         }
+        PublishedAssetVerifier.verifyPending(resolver, uri, motionPhoto)
+        onAssetStage?.invoke(AssetPublishStage.VERIFY_PENDING)
         commit(resolver, uri)
         onAssetStage?.invoke(AssetPublishStage.MEDIASTORE_COMMIT)
         PublishedAssetVerifier.verifyPublished(resolver, uri, displayName, RELATIVE_DIR, motionPhoto)
@@ -88,6 +117,15 @@ object CaptureSaver {
     fun deleteQuietly(resolver: ContentResolver, uri: Uri?) {
         if (uri != null) runCatching { resolver.delete(uri, null, null) }
     }
+
+    fun deleteConfirmed(resolver: ContentResolver, uri: Uri?) {
+        if (uri == null) return
+        retireAsset({ rowExists(resolver, uri) }, { resolver.delete(uri, null, null) })
+    }
+
+    private fun rowExists(resolver: ContentResolver, uri: Uri): Boolean =
+        resolver.query(uri, arrayOf(MediaStore.Images.Media._ID), null, null, null)
+            ?.use { it.moveToFirst() } ?: throw IOException("无法核验原照片状态")
 
     private fun writePending(resolver: ContentResolver, uri: Uri, source: File) {
         resolver.openOutputStream(uri, "w")?.use { output ->

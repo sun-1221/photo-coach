@@ -45,6 +45,7 @@ internal fun CreativeResultPanel(
     onReset: () -> Unit,
     onCompareOriginal: (Boolean) -> Unit,
     onSaveCopy: () -> Unit,
+    onRetryCopy: () -> Unit = {},
     onOpenPhoto: (String) -> Unit,
     onSharePhoto: (String) -> Unit,
     onFavoritePhoto: (String) -> Unit,
@@ -168,7 +169,11 @@ internal fun CreativeResultPanel(
                     onClick = onSaveCopy,
                     enabled = !result.exportInProgress,
                     modifier = Modifier.weight(1f).height(48.dp).testTag("creative_save_copy"),
-                ) { Text(if (result.exportInProgress) "正在另存" else "另存副本") }
+                ) { Text(if (result.exportInProgress) "正在另存" else "另存新副本") }
+            }
+            if (result.failedExportId != null) {
+                TextButton(onClick = onRetryCopy, enabled = !result.exportInProgress,
+                    modifier = Modifier.testTag("creative_retry_copy")) { Text("重试上次副本（保留当时配方）") }
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = masks.subtle))
             Text(

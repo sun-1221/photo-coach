@@ -14,6 +14,44 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class CreativeCaptureSessionTest {
+    @Test fun `each shot has a unique capture id and a stable batch id`() {
+        val session = CreativeCaptureSession()
+        session.begin(3, CreativeStyle.ORIGINAL, CameraUserSettings.DEFAULT, .4f, false)
+        val first = requireNotNull(session.nextCaptureSpec(null))
+        assertEquals(first, session.nextCaptureSpec(null))
+        session.record(photo("first", .4))
+        val second = requireNotNull(session.nextCaptureSpec(null))
+        assertFalse(first.captureId == second.captureId)
+        assertEquals(first.batchId, second.batchId)
+    }
+
+    @Test fun `save retry retains pause until explicit continue and never recaptures source`() {
+        val session = CreativeCaptureSession()
+        session.begin(3, CreativeStyle.ORIGINAL, CameraUserSettings.DEFAULT, .4f, false)
+        val first = session.nextCaptureSpec(null)
+        session.markSourceCaptured()
+        session.failBurst("disk full")
+        assertFalse(session.continueRemaining())
+        session.resumeBurstAfterRetry()
+        assertEquals(first, session.nextCaptureSpec(null))
+        session.record(photo("first", .4))
+        assertTrue(session.paused)
+        assertEquals(null, session.nextCaptureSpec(null))
+        assertTrue(session.continueRemaining())
+        assertEquals(2, session.nextCaptureSpec(null)?.sequence)
+    }
+
+    @Test fun `editing resets to the captured strength and retains per photo history`() {
+        val session = session()
+        session.begin(3, CreativeStyle.CLEAR_TRAVEL, CameraUserSettings.DEFAULT, .4f, false)
+        session.record(photo("first", .4).copy(edit = EditAdjustment(styleStrength = .4f)))
+        session.record(photo("second", .5).copy(edit = EditAdjustment(styleStrength = .6f)))
+        assertEquals(.4f, session.resetEditing("first").edit.styleStrength)
+        session.updateEdit(EditAdjustment(styleStrength = .8f))
+        assertEquals(.6f, session.resetEditing("second").edit.styleStrength)
+        assertEquals(.8f, session.resetEditing("first").edit.styleStrength)
+        assertEquals(.4f, session.resetEdit().edit.styleStrength)
+    }
     @Test
     fun `capture start freezes identity settings style and time for the batch`() {
         val session = session()
@@ -78,7 +116,7 @@ class CreativeCaptureSessionTest {
         assertTrue(redone.canUndo)
 
         val reset = session.resetEdit()
-        assertEquals(EditAdjustment(), reset.edit)
+        assertEquals(EditAdjustment(styleStrength = 0f), reset.edit)
         assertFalse(reset.canReset)
     }
 

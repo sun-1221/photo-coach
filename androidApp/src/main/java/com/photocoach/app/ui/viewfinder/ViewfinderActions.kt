@@ -68,4 +68,9 @@ data class ViewfinderActions(
     val onFavoritePhoto: (String) -> Unit = {},
     val onTrashPhoto: (String) -> Unit = {},
     val onDismissCreativeResult: () -> Unit = {},
+    val onContinueBurst: () -> Unit = {},
+    val onParameterPanelChange: (Boolean) -> Unit = {},
+    val onRetryCreativeCopy: () -> Unit = {},
+    val onRecoveryPanelChange: (Boolean) -> Unit = {},
+    val onRetryRecoveredSave: (String) -> Unit = {},
 )

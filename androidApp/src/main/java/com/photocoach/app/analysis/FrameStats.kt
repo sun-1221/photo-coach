@@ -265,10 +265,14 @@ internal object FaceLuminanceClassifier {
     private const val MIN_BACKGROUND_SAMPLES = 12
 
     fun isDarkerThanBackground(grid: LumaGrid, detectedFace: LumaRegion): Boolean {
+        return measureDarkerThanBackground(grid, detectedFace) == true
+    }
+
+    fun measureDarkerThanBackground(grid: LumaGrid, detectedFace: LumaRegion): Boolean? {
         val faceCore = detectedFace.inset(horizontalFraction = 0.18f, verticalFraction = 0.2f)
         val excludedBackground = detectedFace.expand(0.12f)
-        val faceMean = grid.mean(faceCore, MIN_FACE_SAMPLES) ?: return false
-        val backgroundMean = grid.meanOutside(excludedBackground, MIN_BACKGROUND_SAMPLES) ?: return false
+        val faceMean = grid.mean(faceCore, MIN_FACE_SAMPLES) ?: return null
+        val backgroundMean = grid.meanOutside(excludedBackground, MIN_BACKGROUND_SAMPLES) ?: return null
         return backgroundMean - faceMean >= FACE_DARKER_DIFFERENCE
     }
 }
