@@ -2,9 +2,9 @@
 
 - 状态：已按需求拍板，第一版采用方案 A
 - 更新日期：2026-08-31
-- 产品依据：[requirement.md](requirement.md)
+- 产品依据：[产品需求总纲](requirement.md)
 - 技术决定：[architecture/decisions.md](architecture/decisions.md)
-- 追踪矩阵：[traceability/requirements-matrix.md](traceability/requirements-matrix.md)
+- 追踪矩阵：[功能需求定义与追踪矩阵](traceability/requirements-matrix.md)
 
 本文是系统上下文、模块边界、依赖方向、质量属性、核心运行链路、技术基线与回退策略的最高权威入口。产品范围、口令内容和验收以需求入口为准；专题不能静默改变产品 Scope 或把 Unknown/NotRun 写成通过。
 
@@ -76,7 +76,7 @@ ImageCapture → MediaStore → 可见成功或可恢复失败
 
 ### 3.2 已批准 P1 创意与 Live
 
-普通创意处理发生在捕获后，不替换 CameraX 原片管线：原片优先发布，配方私有保存，效果副本仅在明确另存或主动双保存时生成。captureId 关联原片、配方、副本与连拍序号；SaveCoordinator 分阶段、幂等、只重试失败阶段。
+普通创意处理发生在捕获后，不替换 CameraX 原片管线：原片优先发布，配方私有保存，效果副本仅在明确另存或主动双保存时生成。batchId 关联单拍/连拍请求，独立 captureId 关联单张原片、配方和派生资产，derivativeId 区分另存副本；SaveCoordinator 分阶段、幂等、只重试失败阶段。
 
 Live 仅在显式开启且四用例能力允许时增加无音轨 VideoCapture，强制标准 Photo、SDR JPEG、关闭 Extensions。Motion Photo 打包或发布任何失败都回到未改写的普通 JPEG，最终至多发布一个主文件。
 
@@ -91,7 +91,7 @@ Live 仅在显式开启且四用例能力允许时增加无音轨 VideoCapture�
 | 离线 | P-1 意图、指导、捕获、保存不依赖 ExplainApi | 飞行模式设备证据 NotRun |
 | 隐私 | 端侧信号、只申请 CAMERA、不识别身份、不读整本相册 | 上架前安装包与数据安全披露仍需审计 |
 | 可靠性 | 标准能力探测、可见降级、MediaStore pending、journal 幂等恢复、原片不回滚 | HyperOS 存储压力/进程恢复 NotRun |
-| 确定性 | 场景规则、P1 颜色矩阵、选优排序、captureId/阶段键可单测 | 真实颜色、广色域和推荐有效性 NotRun |
+| 确定性 | 场景规则、P1 颜色矩阵、选优排序、captureId/资产/阶段键可单测 | 真实颜色、广色域和推荐有效性 NotRun |
 | 可移植边界 | coach 数据/模型平台无关，平台相机壳原生 | 不等于已立项 iOS 或其他 Android |
 | 可追踪性 | FR/UX/组件/自动化/设备状态分列 | 路径存在不等于 Delivery 完成 |
 
@@ -142,9 +142,9 @@ Live 仅在显式开启且四用例能力允许时增加无音轨 VideoCapture�
 | [P1 创意、保存与 Motion Photo](architecture/creative-and-storage.md) | 领域模型、颜色矩阵、连拍、资源上限、SaveCoordinator、MediaStore 与 Motion Photo |
 | [自然上镜 v1](architecture/beauty.md) | 独立批准的 PREVIEW-only GPU、端侧关键点快照、按需 CPU 导出和失败/热回退 |
 | [架构决策记录](architecture/decisions.md) | 原生方案、共享边界、C# 服务、iOS 方向、明确不选项和历史比较 |
-| [产品入口](requirement.md) | Scope、Go/No-Go、跨版本硬约束和隐私 |
-| [追踪矩阵](traceability/requirements-matrix.md) | Requirement → Phase → Acceptance → Component → Evidence → Status |
-| [ConflictPending](traceability/decisions-and-conflicts.md) | 未经用户拍板的产品/架构矛盾 |
+| [产品需求总纲](requirement.md) | Scope、Go/No-Go、跨版本硬约束和隐私 |
+| [功能需求定义与追踪矩阵](traceability/requirements-matrix.md) | Requirement → Phase → Acceptance → Component → Evidence → Status |
+| [需求决策与冲突记录](traceability/decisions-and-conflicts.md) | 未经用户拍板的产品/架构矛盾 |
 
 ## 8. 验证基线与真实状态
 
@@ -152,12 +152,10 @@ Live 仅在显式开启且四用例能力允许时增加无音轨 VideoCapture�
 
 历史自动化结果（2026-08-31）：coach JVM Pass；Android JVM Pass；ExplainApi .NET Pass（3/3），当时 Android instrumented 与目标机证据为 NotRun。2026-09-03 自然上镜实施新增模拟器仪器验证，详见[美颜验证报告](traceability/beauty-validation-2026-09-03.md)；不据此改写历史或目标机 NotRun。完整文档基线见[验证报告](traceability/validation-report.md)。
 
-当前没有小米 14 Pro 连接证据。快捷焦段/EXIF、真实 Zoom/EV、Extensions 三用例、AE/AF 3A、画幅成片、音量键倒计时、连续 100 张保存、遮挡/污渍误报、十二种风格和七项编辑真实颜色、连拍间隔/热量/推荐有效性、HyperOS MediaStore 分阶段保存/收藏/回收站、广色域/Ultra HDR，以及 Live 四用例绑定、编码、裁剪和 Motion Photo 播放全部为 NotRun。唯一详细状态以[目标机真机矩阵](acceptance/acceptance-plan.md#92-目标机真机矩阵)和[追踪矩阵](traceability/requirements-matrix.md)为准。
+当前没有小米 14 Pro 连接证据。快捷焦段/EXIF、真实 Zoom/EV、Extensions 三用例、AE/AF 3A、画幅成片、音量键倒计时、连续 100 张保存、遮挡/污渍误报、十二种风格和七项编辑真实颜色、连拍间隔/热量/推荐有效性、HyperOS MediaStore 分阶段保存/收藏/回收站、广色域/Ultra HDR，以及 Live 四用例绑定、编码、裁剪和 Motion Photo 播放全部为 NotRun。唯一详细状态以[目标机真机矩阵](acceptance/acceptance-plan.md#92-目标机真机矩阵)和[功能需求定义与追踪矩阵](traceability/requirements-matrix.md)为准。
 
-## 9. 未决架构接口
+## 9. 需求修订与剩余接口
 
-- CP-03：P1 最多三张参数卡与全局“一次一件事”的 UI 边界。
-- CP-04：短口令核 12–16 与旧架构 8–12 的数量基线。
-- CP-05：非目标设备安全降级用例是否构成兼容承诺。
+2026-09-05 按用户同意的方案：CP-03 采用主动打开的独立参数面板；CP-04 由行为覆盖推导口令数量；CP-05 定位非目标设备检查为非阻断健壮性检查。历史双方与决议见[需求决策与冲突记录](traceability/decisions-and-conflicts.md)。
 
-在[冲突登记](traceability/decisions-and-conflicts.md)解决前，本入口不选择实现解释。
+CP-01 布局测量分母和阈值仍为 ConflictPending；最低可拍信号的有效期/校准、实验待决参数及旧保存日志身份映射仍为 Unknown。修订后的状态、面板及恢复合同未做代码符合性和动态验证，不沿用历史测试结果宣称通过。

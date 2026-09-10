@@ -1,6 +1,6 @@
 # 自然上镜专项验收操作单
 
-本文件提供 UX-46～UX-49 的执行方法，不创建新的 FR/UX，也不代替[验收计划](acceptance-plan.md)。Scope 为 ApprovedSeparate；目标机只能记录小米 14 Pro。默认 OFF，P-1 对照实验始终关闭。当前证据见[验证报告](../traceability/beauty-validation-2026-09-03.md)。
+本文件提供 UX-46～UX-49 的执行方法，不创建新的 FR/UX，也不代替[分阶段验收规范](acceptance-plan.md)。Scope 为 ApprovedSeparate；目标机只能记录小米 14 Pro。默认 OFF，P-1 对照实验始终关闭。当前证据见[验证报告](../traceability/beauty-validation-2026-09-03.md)。
 
 ## 1. 使用入口
 

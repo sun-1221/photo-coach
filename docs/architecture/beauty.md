@@ -1,6 +1,6 @@
 # 自然上镜 v1 架构
 
-产品依据：[规格](../requirements/p1-beauty.md)。沿用 CameraX 1.6.1 和 ML Kit face 16.1.7，不增加实时检测器、MediaPipe/Media3/SDK。
+产品依据：[P1 自然上镜需求（v1）](../requirements/p1-beauty.md)。沿用 CameraX 1.6.1 和 ML Kit face 16.1.7，不增加实时检测器、MediaPipe/Media3/SDK。
 
 1. CoachAnalyzer 复用已有 landmarks，发布纯数值 BeautyFaceFrame 和 sensorToAnalysis 变换，AtomicReference 最新快照。没有 Face 对象、图片或身份日志。ML Kit 回调以 `result.timestamp` 从容量 3 的元数据表取对应分析帧（不保留 ImageProxy），避免 close 后下一帧覆盖单个 lastFrame 的错配。分析旋转坐标逆变换回 sensor 后映射输出像素，Android/GL Y 轴显式转换；输入采样 crop/rotation/mirror 交给 SurfaceOutput.updateTransformMatrix，蒙版独立用输出 `sensorToBufferTransform`，不复用 fitCenter 叠线映射。
 2. 独立 EGL/GLES 线程管理 PREVIEW-only SurfaceProcessor。OES→RGBA→1/4 尺寸统计→可分离盒滤波→guided coefficients→均值 coefficients→细节保留与蒙版融合。现有 PreviewView 全局颜色矩阵在美颜之后，Compose 指引层不处理。不使用不支持的 PREVIEW|IMAGE_CAPTURE。

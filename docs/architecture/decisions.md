@@ -16,6 +16,10 @@
 | ADR-006 暂不选择项 | Accepted | 不用 MAUI/Flutter CameraView 做主取景器，不自研 ISP/RAW，不为纯 C# 牺牲 CameraX 可控性 | 若将来推翻必须新 ADR 和产品范围决策 |
 | ADR-007 自然上镜 v1 | Accepted / ApprovedSeparate | 独立默认 OFF，PREVIEW-only GPU 与按需 CPU 纹理平滑 | 仅普通后摄单人，Live/Extensions 互斥；不改变旧风格、不声称真机通过 |
 
+## 2026-09-05 产品决议对架构的约束
+
+CP-03 已选择独立参数面板，CP-04 已选择按覆盖推导口令数量，CP-05 已将非目标设备用例限定为非阻断健壮性检查。完整历史双方及用户决议保留在[需求决策与冲突记录](../traceability/decisions-and-conflicts.md)。对应架构目标合同已同步；不把规范修订当作代码迁移、回归测试或真机通过。CP-01 仍未决。
+
 ## 原始决策依据
 
 ADR-007（2026-09-03，用户批准，ApprovedSeparate）：自然上镜 v1 独立默认关闭，PREVIEW-only GPU 局部平滑及按需 SDR 副本。仅对此允许 CameraEffect/局部纹理处理；原有风格不磨皮、P-1/P0 隔离、原图与权限门禁不变。详见[beauty.md](beauty.md)，目标机验收 NotRun。

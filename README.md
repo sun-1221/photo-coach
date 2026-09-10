@@ -4,7 +4,7 @@
 
 | 目录 | 职责 |
 | --- | --- |
-| [docs/requirement.md](docs/requirement.md) | 产品需求 |
+| [产品需求总纲](docs/requirement.md) | 产品需求 |
 | [docs/architecture.md](docs/architecture.md) | 技术架构 |
 | `coach/` | 场景口令 JSON 与匹配（无 Android UI） |
 | `androidApp/` | CameraX / Compose 取景器 |

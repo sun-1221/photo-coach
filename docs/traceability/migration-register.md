@@ -13,7 +13,7 @@ A. 盘点并保存版本化历史正文；B. 研究依据；C. 产品规格与�
 
 | 旧位置 | 覆盖单元 | Status | 新位置 |
 | --- | --- | --- | --- |
-| 前言、状态、版本术语 | 状态、权威声明、P-1/P0/P1/后期术语表 | Retained | [需求入口](../requirement.md) |
+| 前言、状态、版本术语 | 状态、权威声明、P-1/P0/P1/后期术语表 | Retained | [产品需求总纲](../requirement.md) |
 | 1.1 | 一句话产品定义 | Retained | [需求入口](../requirement.md#11-一句话) |
 | 1.2 | 问题清单全部 5 条 | Retained | [需求入口](../requirement.md#12-要解决的问题) |
 | 1.3 | 核心原则表全部 9 行 | Retained | [需求入口](../requirement.md#13-核心产品原则) |
@@ -33,7 +33,7 @@ A. 盘点并保存版本化历史正文；B. 研究依据；C. 产品规格与�
 | 5.1 | 页面表、入口规则 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#51-页面) |
 | 5.2 | 首次进入流程图与说明 4 条 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#52-首次进入) |
 | 5.3 | P-1 主流程图、预算与提前快门规则 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#53-p-1-主流程) |
-| 5.4 | 竖横屏布局图、黑带/高度/动作卡/无建议规则 | ConflictPending | [交互规格](../requirements/interaction-guidance-and-scenarios.md#54-取景器布局)；[CP-01](decisions-and-conflicts.md) |
+| 5.4 | 竖横屏布局图、黑带/高度/动作卡/无建议规则 | ConflictPending | [交互规格](../requirements/interaction-guidance-and-scenarios.md#54-取景器布局)；[需求决策与冲突记录](decisions-and-conflicts.md) |
 | 6.1 | 取景器组件表全部 19 行与验收 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#61-取景器组件) |
 | 6.2 | 状态表、时序、防抖、TTS 与替换规则 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#62-交互状态) |
 | 6.3 | P-1/P0 意图表和多人回退 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#63-意图操作) |
@@ -42,13 +42,13 @@ A. 盘点并保存版本化历史正文；B. 研究依据；C. 产品规格与�
 | 6.6 | 保存反馈和恢复规则 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#66-保存反馈与恢复) |
 | 6.7 | P0 代拍 5 步与非独有边界 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#67-p0-代拍简化界面) |
 | 6.8 | 无障碍、48dp、TalkBack、字号与手势规则 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#68-易用性与无障碍) |
-| 7 | FR 表全部 31 行、阶段、需求和验收摘要 | Consolidated | [FR 唯一权威矩阵](requirements-matrix.md) |
+| 7 | FR 表全部 31 行、阶段、需求和验收摘要 | Consolidated | [功能需求定义与追踪矩阵](requirements-matrix.md) |
 | 8.1 | 候选流程图、持续运行、优先级与预算 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#81-候选优先级和预算) |
 | 8.2 | 触发/完成/失效/重复/冲突阈值表 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#82-触发与防抖) |
 | 8.3 | 信号到提示表全部条件、口令和限制 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#83-信号到提示) |
 | 8.4 | 文案规则 6 条 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#84-文案规则) |
 | 8.5 | P0 再讲细全部隐私、失败与客户端过滤规则 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#85-p0-再讲细) |
-| 9.1 | UX 表全部 38 行；从错误混合区分为 P-1 与已批准 P1 | Consolidated | [UX 唯一权威验收](../acceptance/acceptance-plan.md)；[CP-02/03/05](decisions-and-conflicts.md) |
+| 9.1 | UX 表全部 38 行；从错误混合区分为 P-1 与已批准 P1 | Consolidated | [分阶段验收规范](../acceptance/acceptance-plan.md)；[需求决策与冲突记录](decisions-and-conflicts.md) |
 | 9.2 | 目标机规则、设备记录字段与 12 项 NotRun 表 | Moved | [验收真机矩阵](../acceptance/acceptance-plan.md#92-目标机真机矩阵) |
 | 9.3 | 本地门禁、质量与实验限制 | Moved | [验收质量门槛](../acceptance/acceptance-plan.md#93-质量门槛) |
 | 10.1 | 产品/成片约束全部规则 | Retained | [需求入口](../requirement.md#101-产品与成片约束) |
@@ -58,9 +58,9 @@ A. 盘点并保存版本化历史正文；B. 研究依据；C. 产品规格与�
 | 11.2 | P0 场景表、P1 预写表与风格边界 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#112-p0-与-p1-场景) |
 | 11.3 | 回归样张四类与额外要求 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#113-回归样张) |
 | 11.4 | 冲突优先级、初始参数表与禁止项 | Moved | [交互规格](../requirements/interaction-guidance-and-scenarios.md#114-场景初始参数) |
-| 11.5 | 短口令表、核规则和 12–16 数量口径 | ConflictPending | [交互规格](../requirements/interaction-guidance-and-scenarios.md#115-短口令核)；[CP-04](decisions-and-conflicts.md) |
+| 11.5 | 短口令表、核规则和 12–16 数量口径 | Consolidated | [交互规格](../requirements/interaction-guidance-and-scenarios.md#115-短口令核)；[需求决策与冲突记录](decisions-and-conflicts.md) |
 | 12.1 | P1 候选清单与数据门禁 | Moved | [P1 规格](../requirements/p1-creative.md#121-p1-候选) |
-| 12.2 | 参数教练、12 风格表、三张连拍、七项编辑、保存与 Live 全部细则 | ConflictPending | [P1 规格](../requirements/p1-creative.md#122-小米-14-pro-p1-创意层本轮已批准)；[CP-03](decisions-and-conflicts.md) |
+| 12.2 | 参数教练、12 风格表、三张连拍、七项编辑、保存与 Live 全部细则 | Consolidated | [P1 规格](../requirements/p1-creative.md#122-小米-14-pro-p1-创意层本轮已批准)；[需求决策与冲突记录](decisions-and-conflicts.md) |
 | 12.3 | 第一版明确不做全部 10 条 | Moved | [P1 规格](../requirements/p1-creative.md#123-第一版明确不做) |
 | 12.4 | 范围/市场/实现决策变更规则 | Moved | [P1 规格](../requirements/p1-creative.md#124-决策变更规则) |
 | 13 | 合影后期三阶段与第一版安全回退 | Moved | [后期范围](../requirements/deferred-scope.md#13-合影后期保留第一版不做) |
@@ -85,25 +85,25 @@ A. 盘点并保存版本化历史正文；B. 研究依据；C. 产品规格与�
 | 4（目标设备） | 目标机记录、其他机型边界、焦段发现与标准 API 限制 | Consolidated | [系统上下文/回退](../architecture.md) |
 | 4.1 | 三/四用例、ViewPort、画幅、Extensions、3A、JPEG、倒计时全部规则 | Moved | [相机与感知](../architecture/camera-and-perception.md#41-相机管线) |
 | 4.2 | Face/Pose、亮度采样、多人、隐私、遮挡全部规则 | Moved | [相机与感知](../architecture/camera-and-perception.md#42-感知) |
-| 4.3 | 输入输出、TTS、事件流/reducer、300/600ms、恢复口令与 JSON 回归 | ConflictPending | [口令专题](../architecture/guidance-and-explain.md#43-口令引擎)；[CP-04](decisions-and-conflicts.md) |
+| 4.3 | 输入输出、TTS、事件流/reducer、300/600ms、恢复口令与 JSON 回归 | Consolidated | [口令专题](../architecture/guidance-and-explain.md#43-口令引擎)；[需求决策与冲突记录](decisions-and-conflicts.md) |
 | 4.4 | ExplainApi 同意、压缩帧、固定 JSON、客户端过滤与失败隔离 | Moved | [口令专题](../architecture/guidance-and-explain.md#44-讲解-api) |
-| 4.5（领域模型） | CreativeStyle/EditHistory/Burst/Scorer/ParameterCoach/CaptureIdentity/Save/Motion 模型 | ConflictPending | [创意专题](../architecture/creative-and-storage.md#45-小米-14-pro-p1-创意层)；[CP-03](decisions-and-conflicts.md) |
+| 4.5（领域模型） | CreativeStyle/EditHistory/Burst/Scorer/ParameterCoach/CaptureIdentity/Save/Motion 模型 | Consolidated | [创意专题](../architecture/creative-and-storage.md#45-小米-14-pro-p1-创意层)；[需求决策与冲突记录](decisions-and-conflicts.md) |
 | 4.5（图像/保存） | 8 步图像与保存管线、资源上限、EXIF、journal、回退 | Moved | [创意专题](../architecture/creative-and-storage.md#图像与保存管线) |
 | 4.5（连拍/预览） | 顺序三张、失败暂停、确定排序、RenderEffect 降级 | Moved | [创意专题](../architecture/creative-and-storage.md) |
 | 4.5（Motion Photo） | 6 步 Live、XMP、SDR、单主文件、恢复清理与 NotRun | Moved | [创意专题](../architecture/creative-and-storage.md#motion-photo-管线) |
 | 5 | iOS 留下/新写表与后期边界 | Consolidated | [ADR 与历史依据](../architecture/decisions.md) |
-| 6 | minSdk、CameraX、工程设置、依赖、不升级与完整 NotRun 列表 | Consolidated | [技术基线](../architecture.md#5-技术基线)、[验证基线](../architecture.md#8-验证基线与真实状态)、[验收](../acceptance/acceptance-plan.md) |
+| 6 | minSdk、CameraX、工程设置、依赖、不升级与完整 NotRun 列表 | Consolidated | [技术基线](../architecture.md#5-技术基线)、[验证基线](../architecture.md#8-验证基线与真实状态)、[分阶段验收规范](../acceptance/acceptance-plan.md) |
 | 7 | MAUI/Flutter、ISP/RAW、CameraEffect/LUT/私有 API、KMP、纯 C# 不选项 | Consolidated | [ADR-006 与原始不选项](../architecture/decisions.md) |
 
 ## 冲突覆盖层
 
 | ID | 旧内容来源 | Status | 保留位置 |
 | --- | --- | --- | --- |
-| CP-01 | requirement 5.4 与 UX-15 | ConflictPending | [冲突登记](decisions-and-conflicts.md) |
-| CP-02 | UX-06 与 UX-31，以及状态规则 | Consolidated | [冲突登记的 2026-09-01 决议](decisions-and-conflicts.md) |
-| CP-03 | requirement 1.3/5.4 的一次一件事与 12.2/UX-33 的三张参数卡 | ConflictPending | [冲突登记](decisions-and-conflicts.md) |
-| CP-04 | requirement 11.5 的 12–16 与 architecture 4 的 8–12 | ConflictPending | [冲突登记](decisions-and-conflicts.md) |
-| CP-05 | 仅小米 14 Pro 承诺与 UX-30 非目标设备可用措辞 | ConflictPending | [冲突登记](decisions-and-conflicts.md) |
+| CP-01 | requirement 5.4 与 UX-15 | ConflictPending | [需求决策与冲突记录](decisions-and-conflicts.md) |
+| CP-02 | UX-06 与 UX-31，以及状态规则 | Consolidated | [需求决策与冲突记录](decisions-and-conflicts.md) |
+| CP-03 | requirement 1.3/5.4 的一次一件事与 12.2/UX-33 的三张参数卡 | Consolidated | [需求决策与冲突记录](decisions-and-conflicts.md) |
+| CP-04 | requirement 11.5 的 12–16 与 architecture 4 的 8–12 | Consolidated | [需求决策与冲突记录](decisions-and-conflicts.md) |
+| CP-05 | 仅小米 14 Pro 承诺与 UX-30 非目标设备可用措辞 | Consolidated | [需求决策与冲突记录](decisions-and-conflicts.md) |
 
 ## 零丢失判定
 
@@ -113,3 +113,5 @@ A. 盘点并保存版本化历史正文；B. 研究依据；C. 产品规格与�
 4. ConflictPending 同时保留冲突双方，不产生默认裁决。
 5. FR 唯一定义只在追踪矩阵，UX 唯一定义只在分阶段验收；历史快照明确排除权威计数。
 6. NotRun/Unknown 不因路径存在、文档迁移或自动化通过而改变。
+
+2026-09-05 修订说明：11.5、12.2、口令专题和创意领域模型及 CP-03/04/05 按用户决议合并口径，状态为 Consolidated；CP-01 继续 ConflictPending。原迁移时点的数量、布局和三卡冲突保留于历史及决策记录，不用本次修订回写旧验证结论。

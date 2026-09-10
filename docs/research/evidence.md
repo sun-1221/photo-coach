@@ -1,7 +1,7 @@
 # 市场、交互与官方依据
 
 - 状态：当前规范附件
-- 权威入口：[../requirement.md](../requirement.md)
+- 权威入口：[产品需求总纲](../requirement.md)
 - 原始位置：重构前 `docs/requirement.md` 第 15 节
 - 迁移方式：Moved；原有证据、结论、边界、日期和链接完整保留
 

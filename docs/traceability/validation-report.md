@@ -68,7 +68,7 @@ Gradle 输出显示任务为 UP-TO-DATE 仍代表本次门禁命令成功；它�
 - Live 四用例绑定、无声编码、约 3 秒裁剪、Motion Photo 播放、普通 JPEG 回退、广色域/Ultra HDR。
 - Android instrumented 测试、P-1 三组用户对照实验、市场指标与 Delivery 完整性审计。
 
-详细真机表以[分阶段验收](../acceptance/acceptance-plan.md#92-目标机真机矩阵)为准；逐 FR 状态以[追踪矩阵](requirements-matrix.md)为准。
+详细真机表以[分阶段验收](../acceptance/acceptance-plan.md#92-目标机真机矩阵)为准；逐 FR 状态以[功能需求定义与追踪矩阵](requirements-matrix.md)为准。
 
 ## 6. 语义超集结论
 
@@ -96,3 +96,10 @@ Gradle 输出显示任务为 UP-TO-DATE 仍代表本次门禁命令成功；它�
 | 修复后真机安装与拍摄 | NotRun：ADB daemon 重启后设备掉线，`adb devices -l` 无目标机；APK 未安装 |
 
 修复前目标机证据仍保留为 Fail：原 App Motion Photo 在 HyperOS 相册中只显示静态照片，且前九张存在明显 false Ready。该失败不能被本轮 JVM Pass 覆盖；必须在同一台小米 14 Pro 重新连接后完成安装、遮脸/无人画面、Live 拍摄、MediaStore 校验和相册播放回归。
+
+## 2026-09-05 需求内容修订记录
+
+- 用户批准实施既定需求修订方案；同步 OBJ-GUIDANCE、OBJ-EXPERIMENT、OBJ-CAPTURE 和 OBJ-SPEC-CONTROL 的需求、架构、UX、FR、决策及迁移关系。
+- CP-03/04/05 已按用户决议收口，CP-01 仍为 ConflictPending。实验公式待决项、最低条件校准与旧保存日志映射明确为 Unknown。
+- 本轮仅文档修改；代码实现符合性 Unknown，JVM/.NET、仪器、目标机和产品实验均 NotRun；保留历史证据，不升级当前产品结论。
+- 静态验证：38 个 FR、49 个 UX 定义完整且唯一；FR 表格列数正确；CP-01 留在 ConflictPending，CP-02/03/04/05 位于 Resolved 且表格连续；新增/变更本地链接目标存在；无 Unicode 替换字符；git diff --check 通过。仅证明本轮检查范围内的文档结构，不证明业务实现或产品实验通过。
