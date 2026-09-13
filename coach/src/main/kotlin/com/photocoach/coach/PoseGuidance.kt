@@ -13,6 +13,7 @@ data class PoseCueDefinition(
     val cooldownGroup: String,
     val isEligible: (Signals) -> Boolean,
     val isSatisfied: (Signals) -> Boolean,
+    val hasEvidence: (Signals) -> Boolean = { true },
 )
 
 object PoseCueCatalog {
@@ -56,7 +57,16 @@ object PoseCueCatalog {
     private fun observable(id: String, category: PoseCategory, text: String, cooldownGroup: String,
         eligible: (Signals) -> Boolean, satisfied: (Signals) -> Boolean) =
         PoseCueDefinition(id, category, text, completion = PoseCompletion.OBSERVABLE, timeoutMs = 8_000L,
-            cooldownGroup = cooldownGroup, isEligible = eligible, isSatisfied = satisfied)
+            cooldownGroup = cooldownGroup,
+            isEligible = { poseEvidence(it, id, cooldownGroup) && eligible(it) },
+            isSatisfied = { poseEvidence(it, id, cooldownGroup) && satisfied(it) },
+            hasEvidence = { poseEvidence(it, id, cooldownGroup) })
+
+    private fun poseEvidence(s: Signals, id: String, group: String): Boolean {
+        if (group == "face-direction" || group == "eyes") return s.faceReliable &&
+            (s.analysisSessionId == null || QualitySource.FACE_VISIBILITY in s.qualityObservedAtMs)
+        return s.poseReliable && (s.knownPoseSignals?.contains(if (id == "full-feet") "feet" else group) ?: true)
+    }
 
     private fun inspiration(id: String, category: PoseCategory, text: String, cooldownGroup: String) =
         PoseCueDefinition(id, category, text, completion = PoseCompletion.TIMED_INSPIRATION, timeoutMs = 4_000L,
@@ -95,6 +105,14 @@ class PoseGuidanceReducer(
             state = PoseGuidanceState.MultiPersonSuppressed(category, nowMs); reset(); return state
         }
         if (!signals.faceReliable && !signals.poseReliable) {
+            state = PoseGuidanceState.LowConfidence(category, nowMs); reset(); return state
+        }
+        val activeCue = when (val current = state) {
+            is PoseGuidanceState.Eligible -> current.cue
+            is PoseGuidanceState.CueActive -> current.cue
+            else -> null
+        }
+        if (activeCue != null && !activeCue.hasEvidence(signals)) {
             state = PoseGuidanceState.LowConfidence(category, nowMs); reset(); return state
         }
         when (val current = state) {

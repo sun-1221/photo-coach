@@ -307,7 +307,7 @@ class GuidanceSessionTest {
     }
 
     @Test
-    fun intentLockAndSaveResultsResetPerPhoto() {
+    fun intentLockSurvivesPhotoWhileActionBudgetResets() {
         val session = readySession()
         session.selectIntent(ShotIntent.PERSON_WITH_SCENERY, 10)
         assertFalse(session.autoSelectIntent(ShotIntent.CLOSE_UP))
@@ -320,9 +320,9 @@ class GuidanceSessionTest {
         assertInstanceOf(GuidanceStage.Saved::class.java, session.snapshot().stage)
         session.tick(100 + GuidanceSession.SAVE_SUCCESS_DURATION_MS)
         assertInstanceOf(GuidanceStage.Observing::class.java, session.snapshot().stage)
-        assertFalse(session.snapshot().intentLocked)
+        assertTrue(session.snapshot().intentLocked)
         assertFalse(session.snapshot().optionalUsed)
-        assertTrue(session.autoSelectIntent(ShotIntent.CLOSE_UP))
+        assertFalse(session.autoSelectIntent(ShotIntent.CLOSE_UP))
     }
 
     @Test

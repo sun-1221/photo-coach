@@ -5,8 +5,8 @@
     { "id": "keep_subject_in_frame", "text": "后退半步，人物别贴画面边缘", "audience": "shooter", "channel": "composition", "priority": 115, "directionGroup": "distance", "direction": -1, "critical": true },
     { "id": "focus_face", "text": "点一下脸，再重新构图", "audience": "shooter", "channel": "light", "priority": 100 },
     { "id": "move_closer", "text": "走近一步，减少无关空白", "audience": "shooter", "channel": "composition", "priority": 90, "directionGroup": "distance", "direction": 1 },
-    { "id": "move_closer_keep_scenery", "text": "略走近，让人物更清楚，地标留全", "audience": "shooter", "channel": "composition", "priority": 90, "directionGroup": "distance", "direction": 1 },
-    { "id": "level_phone", "text": "沿网格放平手机，地平线别歪", "audience": "shooter", "channel": "composition", "priority": 95, "directionGroup": "tilt", "direction": 1 },
+    { "id": "move_closer_keep_scenery", "text": "略走近，让人物更清楚，景物留全", "audience": "shooter", "channel": "composition", "priority": 90, "directionGroup": "distance", "direction": 1 },
+    { "id": "level_phone", "text": "沿网格放平手机", "audience": "shooter", "channel": "composition", "priority": 95, "directionGroup": "tilt", "direction": 1 },
     { "id": "place_on_thirds", "text": "人物放在左或右三分线，景物留另一侧", "audience": "shooter", "channel": "composition", "priority": 80 },
     { "id": "place_face_on_upper_third", "text": "把脸放到上方三分线", "audience": "shooter", "channel": "composition", "priority": 82 },
     { "id": "lower_exposure", "text": "高光过曝，曝光略降", "audience": "shooter", "channel": "light", "priority": 85, "directionGroup": "exposure", "direction": -1 },
@@ -15,17 +15,17 @@
     { "id": "chin_down", "text": "下巴微收，头略往前", "audience": "subject", "channel": "pose", "priority": 80 },
     { "id": "angle_body", "text": "身体侧一点，脸转回镜头", "audience": "subject", "channel": "pose", "priority": 78 },
     { "id": "relax_shoulders", "text": "肩放松", "audience": "subject", "channel": "pose", "priority": 68 },
-    { "id": "rest_hands", "text": "手插口袋，或轻搭身侧", "audience": "subject", "channel": "pose", "priority": 65 }
+    { "id": "rest_hands", "text": "手自然放在身侧", "audience": "subject", "channel": "pose", "priority": 65 }
   ],
   "scenes": [
     {
       "id": "window_portrait",
       "startParams": { "mode": "PORTRAIT", "preferTelephoto": true, "focus": "FACE", "evBias": 0.0, "flashOff": true },
       "shooterCues": [
-        { "id": "move_to_window", "text": "靠近窗边，让柔光照到脸", "audience": "shooter", "channel": "composition", "priority": 75 }
+        { "id": "move_to_window", "text": "移向光线更均匀的位置", "audience": "shooter", "channel": "composition", "priority": 75 }
       ],
       "subjectCues": [
-        { "id": "turn_to_window", "text": "身体转向窗户", "audience": "subject", "channel": "pose", "priority": 90 },
+        { "id": "turn_to_window", "text": "身体转向较亮的一侧", "audience": "subject", "channel": "pose", "priority": 90 },
         { "id": "chin_down", "text": "下巴微收，头略往前", "audience": "subject", "channel": "pose", "priority": 80 }
       ],
       "forbiddenPhrases": ["开闪光", "广角贴脸"]
@@ -38,7 +38,7 @@
       ],
       "subjectCues": [
         { "id": "angle_body", "text": "身体侧一点，脸转回镜头", "audience": "subject", "channel": "pose", "priority": 88 },
-        { "id": "look_at_landmark", "text": "看镜头或看地标", "audience": "subject", "channel": "pose", "priority": 72 }
+        { "id": "look_at_landmark", "text": "看向镜头", "audience": "subject", "channel": "pose", "priority": 72 }
       ],
       "forbiddenPhrases": ["切长焦", "数码变焦", "挡住地标"]
     },

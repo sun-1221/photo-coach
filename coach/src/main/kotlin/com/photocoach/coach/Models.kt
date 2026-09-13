@@ -101,6 +101,8 @@ enum class CueId {
     P1_HIGHLIGHTS,
     @SerialName("p1_distance")
     P1_DISTANCE,
+    @SerialName("p1_camera_position")
+    P1_CAMERA_POSITION,
     @SerialName("p1_background")
     P1_BACKGROUND,
     @SerialName("p1_night")
@@ -210,6 +212,9 @@ data class Signals(
     val qualityEvidenceComplete: Boolean = false,
     val qualityObservedAtMs: Map<QualitySource, Long> = emptyMap(),
     val observedAtMs: Long? = null,
+    val analysisSessionId: Long? = null,
+    val captureTimestampNs: Long? = null,
+    val knownPoseSignals: Set<String>? = null,
     val faceCount: Int = 0,
     val faceRatio: Float = 0f,
     val faceDarkerThanScene: Boolean = false,
@@ -226,6 +231,7 @@ data class Signals(
     val faceMetered: Boolean = false,
     val faceTurnedAway: Boolean = false,
     val eyesLikelyClosed: Boolean = false,
+    val knownFaceSignals: Set<String>? = null,
     val headTiltedBack: Boolean = false,
     val shouldersSquare: Boolean = false,
     val shouldersRaised: Boolean = false,

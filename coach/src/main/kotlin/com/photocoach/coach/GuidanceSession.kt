@@ -66,9 +66,24 @@ class GuidanceSession(
     initialIntent: ShotIntent = ShotIntent.CLOSE_UP,
     /** Provisional expiry guard, not a target-device calibrated acceptance threshold. */
     private val maximumSignalAgeMs: Long = 1_500L,
+    private val staticResearchCues: List<Cue>? = null,
+    private val researchPreparationRequired: Boolean = false,
     private val onCueEnded: (Cue, String, Long) -> Unit = { _, _, _ -> },
 ) {
     private var decisionTimeMs = 0L
+    private var researchPreparing = false
+
+    fun completeResearchPreparation(nowMs: Long) {
+        if (!researchPreparing) return
+        researchPreparing = false
+        decisionTimeMs = nowMs
+        stage = when (val current = stage) {
+            is GuidanceStage.Observing -> current.copy(sinceMs = nowMs)
+            is GuidanceStage.Action -> current.copy(shownAtMs = nowMs, playbackFinishedAtMs = null, resolvedSinceMs = null)
+            else -> current
+        }
+        lastSpokenText = null
+    }
     private var outputPaused = false
     private var suppressedResumeCue: Cue? = null
     private var externalOptional: Cue? = null
@@ -140,6 +155,13 @@ class GuidanceSession(
     private var baselineSignals: Signals = Signals()
     private var latestSignals: Signals? = null
     private var latestCues: List<Cue> = emptyList()
+    private val frameSequence = FrameSequenceGate()
+    fun onAnalysisSession(sessionId: Long) {
+        frameSequence.activate(sessionId)
+        latestSignals = null
+        latestSignalsAtMs = 0L
+        resetCandidateTracking(); resetShooterCandidateTracking(); resetSubjectCandidateTracking()
+    }
     private var latestSignalsAtMs: Long = 0L
     private var readinessCandidate: ReadinessIssue? = null
     private var readinessCandidateSinceMs: Long = 0L
@@ -163,7 +185,7 @@ class GuidanceSession(
         intent = intent,
         intentLocked = intentLocked,
         stage = stage,
-        shutterEnabled = cameraAvailable && stage !is GuidanceStage.Initializing &&
+        shutterEnabled = cameraAvailable && !researchPreparing && stage !is GuidanceStage.Initializing &&
             stage !is GuidanceStage.Capturing && stage !is GuidanceStage.SaveFailed,
         optionalUsed = optionalUsed,
         roundId = roundId,
@@ -197,8 +219,13 @@ class GuidanceSession(
     }
 
     fun onCandidates(output: CoachOutput, signals: Signals, nowMs: Long) {
+        if (researchPreparing) return
+        if (staticResearchCues != null) return
         decisionTimeMs = nowMs
         if (output.intent != intent) return
+        val acceptedFrame = frameSequence.accept(signals.analysisSessionId, signals.captureTimestampNs, signals.observedAtMs, nowMs)
+        if (frameSequence.restarted) { resetCandidateTracking(); resetShooterCandidateTracking(); resetSubjectCandidateTracking(); resetOptionalCandidateTracking() }
+        if (!acceptedFrame) return
         val before = snapshot().currentCue
         latestSignals = signals
         latestCues = output.cues
@@ -212,6 +239,12 @@ class GuidanceSession(
             nowMs,
         )
         if (outputPaused) return
+        if (before?.audience == Audience.SUBJECT && (signals.faceCount > 1 ||
+            !signals.faceReliable && !signals.poseReliable || !cueEvidenceKnown(before, signals))) {
+            enterReady(nowMs = nowMs)
+            onCueEnded(before, "evidence_lost", nowMs)
+            return
+        }
         when (val current = stage) {
             is GuidanceStage.Observing -> observeCandidates(output.cues, signals, current, nowMs)
             is GuidanceStage.Action -> updateAction(current, signals, nowMs)
@@ -223,10 +256,16 @@ class GuidanceSession(
     }
 
     fun tick(nowMs: Long) {
+        if (researchPreparing) return
         decisionTimeMs = nowMs
         if (outputPaused && stage !is GuidanceStage.Saved) return
         val before = snapshot().currentCue
         val oldStage = stage
+        if (staticResearchCues == null && (stage is GuidanceStage.Action || stage is GuidanceStage.Optional) && nowMs - latestSignalsAtMs > maximumSignalAgeMs) {
+            enterReady(nowMs = nowMs)
+            if (before != null) onCueEnded(before, "signal_expired", nowMs)
+            return
+        }
         when (val current = stage) {
             is GuidanceStage.Observing -> {
                 if (nowMs - current.sinceMs >= OBSERVATION_TIMEOUT_MS) enterReady(nowMs = nowMs)
@@ -238,7 +277,7 @@ class GuidanceSession(
             }
             is GuidanceStage.Saved -> {
                 if (nowMs - current.shownAtMs >= SAVE_SUCCESS_DURATION_MS) {
-                    beginObservation(nowMs, unlockIntent = true)
+                    beginObservation(nowMs, unlockIntent = false)
                 }
             }
             else -> Unit
@@ -254,7 +293,7 @@ class GuidanceSession(
         }
     }
 
-    fun skip(nowMs: Long): Boolean = if (outputPaused) false else when (val current = stage) {
+    fun skip(nowMs: Long): Boolean = if (outputPaused || researchPreparing) false else when (val current = stage) {
         is GuidanceStage.Action -> {
             onCueEnded(current.cue, "skipped", nowMs)
             if (current.step == RequiredStep.SHOOTER) {
@@ -273,6 +312,7 @@ class GuidanceSession(
     }
 
     fun requestOptional(nowMs: Long): Boolean {
+        if (researchPreparing) return false
         if (outputPaused) return false
         val ready = stage as? GuidanceStage.Ready ?: return false
         if (!ready.qualityConfirmed || !ready.optionalAvailable || optionalUsed) return false
@@ -286,6 +326,7 @@ class GuidanceSession(
     }
 
     fun takeCueForSpeech(nowMs: Long): Cue? {
+        if (researchPreparing) return null
         if (outputPaused) return null
         val cue = when (val current = stage) {
             is GuidanceStage.Action -> current.cue
@@ -353,8 +394,12 @@ class GuidanceSession(
 
     fun onShutter(nowMs: Long = 0L): Boolean {
         if (!snapshot().shutterEnabled) return false
+        if (stage is GuidanceStage.Saved && researchPreparationRequired) {
+            beginObservation(nowMs, unlockIntent = false)
+            return false
+        }
         snapshot().currentCue?.let { onCueEnded(it, "shutter", nowMs) }
-        if (stage is GuidanceStage.Saved) beginObservation(nowMs, unlockIntent = true)
+        if (stage is GuidanceStage.Saved) beginObservation(nowMs, unlockIntent = false)
         stage = GuidanceStage.Capturing
         return true
     }
@@ -376,7 +421,7 @@ class GuidanceSession(
 
     fun abandonSaveFailure(nowMs: Long): Boolean {
         if (stage !is GuidanceStage.SaveFailed) return false
-        beginObservation(nowMs, unlockIntent = true)
+        beginObservation(nowMs, unlockIntent = false)
         return true
     }
 
@@ -617,6 +662,10 @@ class GuidanceSession(
         nowMs: Long = latestSignalsAtMs,
         allowUserBypass: Boolean = false,
     ) {
+        if (staticResearchCues != null) {
+            stage = GuidanceStage.Ready(optionalAvailable = false, qualityConfirmed = false)
+            return
+        }
         decisionTimeMs = nowMs
         val signals = latestSignals
         if (signals == null || nowMs - latestSignalsAtMs > maximumSignalAgeMs ||
@@ -668,6 +717,7 @@ class GuidanceSession(
     }
 
     private fun beginObservation(nowMs: Long, unlockIntent: Boolean) {
+        researchPreparing = researchPreparationRequired
         if (unlockIntent) intentLocked = false
         roundId += 1
         stage = GuidanceStage.Observing(nowMs)
@@ -683,6 +733,10 @@ class GuidanceSession(
         presentedCueIds.clear()
         directionHistory.clear()
         resetCandidateTracking()
+        staticResearchCues?.let { cues ->
+            requiredSubject = cues.firstOrNull { it.audience == Audience.SUBJECT }
+            cues.firstOrNull { it.audience == Audience.SHOOTER }?.let { showRequiredCue(it, Signals(), nowMs) }
+        }
     }
 
     private fun observeSubjectCandidate(candidate: Cue?, nowMs: Long) {
@@ -782,6 +836,20 @@ class GuidanceSession(
         candidateSignature = emptyList()
         candidateSinceMs = 0L
         candidateFrames = 0
+    }
+
+    private fun cueEvidenceKnown(cue: Cue, signals: Signals): Boolean {
+        if (cue.id == CueId.OPEN_EYES) return signals.faceReliable && (signals.knownFaceSignals?.contains("eyes") ?: true)
+        if (cue.id in setOf(CueId.CHIN_DOWN, CueId.TURN_FACE_TO_CAMERA, CueId.OPEN_EYES, CueId.LOOK_AT_LANDMARK)) {
+            return signals.knownPoseSignals == null || signals.faceReliable
+        }
+        val group = when (cue.id) {
+            CueId.RELAX_SHOULDERS -> "shoulders"
+            CueId.REST_HANDS -> "hands"
+            CueId.ANGLE_BODY, CueId.ANGLE_BODY_BACKLIT, CueId.TURN_TO_WINDOW -> "body-angle"
+            else -> return true
+        }
+        return signals.knownPoseSignals?.contains(group) ?: true
     }
 
     private fun isResolved(cue: Cue, baseline: Signals, current: Signals): Boolean = when (cue.id) {

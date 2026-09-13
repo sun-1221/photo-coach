@@ -4,7 +4,7 @@
     "intent": "close_up",
     "signals": { "faceCount": 1, "faceRatio": 0.16, "coarseScene": "indoor", "oneSideBrighter": true, "poseAvailable": true, "shouldersSquare": true },
     "expectScene": "window_portrait",
-    "mustInclude": ["靠近窗边", "身体转向窗户"],
+    "mustInclude": ["移向光线更均匀", "身体转向较亮的一侧"],
     "mustExclude": ["开闪光"]
   },
   {
@@ -27,7 +27,7 @@
     "intent": "person_with_scenery",
     "signals": { "faceCount": 1, "faceRatio": 0.03, "coarseScene": "outdoor", "hasTelephotoPreset": true, "hasLargeEnvironment": true },
     "expectScene": "outdoor_with_scenery",
-    "mustInclude": ["略走近", "地标留全"],
+    "mustInclude": ["略走近", "景物留全"],
     "mustExclude": ["长焦"]
   },
   {
@@ -65,6 +65,6 @@
     "intent": "close_up",
     "signals": { "faceCount": 2, "faceRatio": 0.16, "coarseScene": "indoor", "oneSideBrighter": true, "poseAvailable": true },
     "expectNoScene": true,
-    "mustExclude": ["身体转向窗户", "合影模式"]
+    "mustExclude": ["身体转向较亮的一侧", "合影模式"]
   }
 ]

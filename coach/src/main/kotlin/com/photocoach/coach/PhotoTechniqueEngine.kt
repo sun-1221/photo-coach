@@ -1,7 +1,7 @@
 package com.photocoach.coach
 
-enum class TechniqueCategory { COMPOSITION, JOINT_CROP, LIGHT, FOCAL_DISTANCE, BACKGROUND, NIGHT, MOTION, MULTI_PERSON_SAFE }
-data class TechniqueCapabilities(val calibratedTelephotoLabel: String? = null, val burstEnabled: Boolean = false)
+enum class TechniqueCategory { COMPOSITION, JOINT_CROP, LIGHT, FOCAL_DISTANCE, BACKGROUND, CAMERA_POSITION, NIGHT, MOTION, MULTI_PERSON_SAFE }
+data class TechniqueCapabilities(val calibratedTelephotoLabel: String? = null, val burstEnabled: Boolean = false, val intent: ShotIntent = ShotIntent.CLOSE_UP)
 data class TechniqueSuggestion(val cueId: CueId, val category: TechniqueCategory, val text: String, val reason: String, val audience: Audience)
 
 object PhotoTechniqueEngine {
@@ -12,7 +12,7 @@ object PhotoTechniqueEngine {
             signals.jointsNearFrameEdge -> suggestion(CueId.P1_JOINTS, TechniqueCategory.JOINT_CROP, "关节别贴着画面边缘", "可靠关节接近裁切边缘")
             signals.faceDarkerThanScene -> suggestion(CueId.P1_FACE_LIGHT, TechniqueCategory.LIGHT, "让人物转向亮的一边", "脸部比背景明显更暗")
             signals.skyOverexposed && signals.exposureReductionAllowed && !signals.faceDarkerThanScene -> suggestion(CueId.P1_HIGHLIGHTS, TechniqueCategory.LIGHT, "曝光降一点", "画面高光明显溢出")
-            signals.faceRatio in 0.001f..<0.05f && capabilities.calibratedTelephotoLabel != null ->
+            capabilities.intent == ShotIntent.CLOSE_UP && signals.faceRatio in 0.001f..<0.05f && capabilities.calibratedTelephotoLabel != null ->
                 suggestion(CueId.P1_DISTANCE, TechniqueCategory.FOCAL_DISTANCE, "退后一点，再切${capabilities.calibratedTelephotoLabel}", "人物较小且焦段已验收")
             signals.backgroundEdgeDensityHigh -> suggestion(CueId.P1_BACKGROUND, TechniqueCategory.BACKGROUND, "换个更干净的背景", "人物附近边缘较密集")
             signals.meanLuma?.let { it < 55f } == true && !signals.handheldStable ->
@@ -22,6 +22,10 @@ object PhotoTechniqueEngine {
             else -> null
         }
     }
+
+    /** Explicit inspiration only; never inferred as camera height or auto-completed. */
+    fun cameraPositionInspiration() = suggestion(CueId.P1_CAMERA_POSITION, TechniqueCategory.CAMERA_POSITION,
+        "尝试稍低机位，原位也可拍", "机位灵感；未测量真实相机高度")
 
     private fun multiPersonSuggestion(signals: Signals): TechniqueSuggestion? = when {
         signals.subjectCutOff -> suggestion(CueId.P1_MULTI_FRAME, TechniqueCategory.MULTI_PERSON_SAFE, "人物再往画面里靠一点", "多人画面有人贴边")
