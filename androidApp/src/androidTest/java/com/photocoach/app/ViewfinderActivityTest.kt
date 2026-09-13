@@ -26,6 +26,7 @@ class ViewfinderActivityTest {
 
     @Test
     fun manualZoomRespectsTheBoundCameraCapability() {
+        compose.mainClock.autoAdvance = false
         if (compose.activity.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(
                 compose.activity.packageName,
@@ -36,6 +37,7 @@ class ViewfinderActivityTest {
             compose.onNodeWithText("同意并继续").performClick()
         }
         compose.waitUntil(timeoutMillis = 10_000) {
+            compose.mainClock.advanceTimeByFrame()
             compose.onAllNodesWithTag("shutter").fetchSemanticsNodes().any {
                 !it.config.contains(SemanticsProperties.Disabled)
             }
@@ -44,21 +46,28 @@ class ViewfinderActivityTest {
 
         val appliedRatio = AtomicReference<Float?>()
         compose.runOnIdle { appliedRatio.set(compose.activity.zoomBy(2f)) }
+        compose.mainClock.advanceTimeBy(100)
 
         if (appliedRatio.get() == null) {
             assertTrue(
                 "unsupported emulator zoom should not show a false ratio",
-                compose.onAllNodesWithTag("control_message").fetchSemanticsNodes().isEmpty(),
+                compose.onAllNodesWithTag("control_message").fetchSemanticsNodes().none { node ->
+                    node.config.contains(SemanticsProperties.Text) && node.config[SemanticsProperties.Text]
+                        .any { it.text.matches(Regex("[0-9.]+x")) }
+                },
             )
             return
         }
 
+        val expected = "${kotlin.math.round(appliedRatio.get()!! * 10f) / 10f}x"
         compose.waitUntil(timeoutMillis = 2_000) {
-            compose.onAllNodesWithTag("control_message").fetchSemanticsNodes().isNotEmpty()
+            compose.mainClock.advanceTimeByFrame()
+            compose.onAllNodesWithText(expected).fetchSemanticsNodes().isNotEmpty()
         }
-        val message = compose.onNodeWithTag("control_message")
+        val message = compose.onNodeWithText(expected)
         message.assertIsDisplayed()
         val ratioText = message.fetchSemanticsNode().config[SemanticsProperties.Text].single().text
-        assertTrue("zoom message was $ratioText", ratioText.removeSuffix("x").toFloat() > 1f)
+        org.junit.Assert.assertEquals(expected, ratioText)
+        compose.onNodeWithTag("shutter").assertIsEnabled()
     }
 }

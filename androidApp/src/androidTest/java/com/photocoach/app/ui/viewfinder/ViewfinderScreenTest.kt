@@ -17,6 +17,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pinch
@@ -31,6 +32,10 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.graphics.asAndroidBitmap
 import com.photocoach.app.AppViewModel
 import com.photocoach.app.beauty.BeautyPreset
 import com.photocoach.app.ViewfinderUi
@@ -67,8 +72,47 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class ViewfinderScreenTest {
+    @Test fun allSevenEditorSlidersPreserveOtherAdjustmentsAndUseCorrectFields() {
+        val uri="android.resource://android/drawable/ic_menu_camera"
+        val last=AtomicReference(com.photocoach.app.creative.EditAdjustment())
+        val photo=CreativePhotoUi(id="edit-photo",originalUri=uri,displayUri=uri,score=PhotoQualityScore(0.0,0.0,0.0),sequence=1,effectWasDownsampled=false)
+        render(ui(GuidanceStage.Saved(uri,0L)).copy(creativeResult=CreativeResultUi(listOf(photo),photo.id,photo.id,"fixture",false),
+            creativeResultVisible=true),onCreativeEdit=last::set)
+        val sliders=compose.onAllNodes(androidx.compose.ui.test.SemanticsMatcher.keyIsDefined(androidx.compose.ui.semantics.SemanticsActions.SetProgress))
+        sliders.assertCountEquals(7)
+        val targets=listOf(.5f,.2f,-.2f,.3f,-.3f,.2f,.7f)
+        targets.forEachIndexed {index,value ->
+            sliders[index].performScrollTo().performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.SetProgress) {action ->assertTrue(action(value))}
+            compose.waitForIdle()
+            val edit=last.get()
+            val values=listOf(edit.exposureStops,edit.contrast,edit.saturation,edit.temperature,edit.tint,edit.fade,edit.styleStrength)
+            for(previous in 0..index)assertEquals(targets[previous],values[previous],.001f)
+        }
+    }
     @get:Rule
     val compose = createComposeRule()
+    @Test fun staticResearchCardIsNotReplacedByLiveLensWarning() {
+        render(ui(GuidanceStage.Action(RequiredStep.SHOOTER, shooterCue, 0)).copy(
+            researchMode = true, staticResearch = true, lensWarning = "镜头可能被遮挡"))
+        compose.onNodeWithText(shooterCue.text).assertIsDisplayed()
+        compose.onAllNodesWithText("镜头可能被遮挡").assertCountEquals(0)
+        compose.onNodeWithTag("shutter").assertIsEnabled()
+        saveEvidence("static-warning-isolation")
+    }
+    private fun saveEvidence(name: String) {
+        val context=InstrumentationRegistry.getInstrumentation().targetContext
+        val directory=java.io.File(context.getExternalFilesDir(null),"acceptance-evidence").apply {mkdirs()}
+        val bitmap=compose.onRoot().captureToImage().asAndroidBitmap()
+        java.io.File(directory,"$name.png").outputStream().use {bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
+        val root=compose.onRoot().getBoundsInRoot()
+        val panel=compose.onNodeWithTag("operation_panel").getBoundsInRoot()
+        val full=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
+        try {
+            java.io.File(directory,"$name-screen.png").outputStream().use {full.compress(android.graphics.Bitmap.CompressFormat.PNG,100,it)}
+            java.io.File(directory,"$name-bounds.txt").writeText("synthetic Compose window; root=$root; operationPanel=$panel; rootPixels=${bitmap.width}x${bitmap.height}; fullScreenPixels=${full.width}x${full.height}; system insets included in edge-to-edge root for default portrait; target-device NotRun")
+            if(name=="portrait-default-20pct")assertEquals("20 percent denominator must be full screen",full.height,bitmap.height)
+        } finally {full.recycle()}
+    }
     @Test
     fun brightnessCanBeOpenedWithoutTappingFaceAndRemainsAvailable() {
         render(ui(GuidanceStage.Ready(optionalAvailable = false)).copy(
@@ -174,7 +218,7 @@ class ViewfinderScreenTest {
     @Test
     fun optionalAppearsOnlyWhenReadyAndOnlyVerifiedFocalButtonsAreShown() {
         render(
-            ui(GuidanceStage.Ready(optionalAvailable = true)).copy(
+            ui(GuidanceStage.Ready(optionalAvailable = true, qualityConfirmed = true)).copy(
                 focalPresets = listOf(defaultFocal, unverifiedTelephoto),
                 selectedFocalId = defaultFocal.cameraId,
             ),
@@ -218,10 +262,12 @@ class ViewfinderScreenTest {
             "panel height $panelHeight exceeded one fifth of root height $rootHeight",
             panelHeight <= rootHeight * 0.20f,
         )
-        assertTrue("panel height was $panelHeight", panelHeight <= 144.dp)
+        val pixelsPerDp=InstrumentationRegistry.getInstrumentation().targetContext.resources.displayMetrics.density
+        assertTrue("panel did not reach the 20 percent target",kotlin.math.abs((panelHeight-rootHeight*.20f).value)*pixelsPerDp<=1f)
         assertEquals(rootBounds.top, cameraBounds.top)
         assertEquals(rootBounds.bottom, cameraBounds.bottom)
         assertTrue("camera did not continue behind compact dock", cameraBounds.bottom >= panelBounds.bottom)
+        saveEvidence("portrait-default-20pct")
     }
 
     @Test
@@ -284,6 +330,13 @@ class ViewfinderScreenTest {
         compose.onNodeWithTag("skip").assertIsDisplayed()
         assertTrue("guidance overlaps shutter", guidance.bottom <= shutter.top)
         assertTrue("shutter clipped at screen bottom", shutter.bottom <= root.bottom)
+        val textLayout=mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        compose.onNodeWithText("美颜·关闭").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult) {it(textLayout)}
+        assertTrue("large beauty label was clipped",textLayout.isNotEmpty() && textLayout.none {it.hasVisualOverflow})
+        val label=compose.onNodeWithText("美颜·关闭").getBoundsInRoot()
+        val button=compose.onNodeWithTag("creative_capture_menu").assertIsDisplayed().getBoundsInRoot()
+        assertTrue("large beauty label escaped its button",label.top>=button.top && label.bottom<=button.bottom)
+        saveEvidence("portrait-font2")
     }
 
     @Test
@@ -398,7 +451,9 @@ class ViewfinderScreenTest {
         }
         compose.onNodeWithTag("creative_style_sunset_gold").performScrollTo().performClick()
         compose.onNodeWithTag("three_shot_burst").performScrollTo().performClick()
-        compose.onNodeWithTag("parameter_suggestion_0").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("打开参数建议").performScrollTo().performClick()
+        compose.onNodeWithTag("parameter_panel").assertIsDisplayed()
+        compose.onNodeWithText("稳定拍摄").assertIsDisplayed()
         compose.onNodeWithText("光线偏弱；架稳手机并使用 3 秒倒计时").assertIsDisplayed()
         compose.runOnIdle {
             assertEquals(CreativeStyle.SUNSET_GOLD, style.get())
@@ -512,7 +567,7 @@ class ViewfinderScreenTest {
         val selected = AtomicReference(BeautyPreset.OFF)
         render(ui(GuidanceStage.Ready(optionalAvailable = false)).copy(modePreference = CameraModePreference.PHOTO),
             onBeautyPresetChange = selected::set)
-        compose.onNodeWithText("美颜·风格").assertIsDisplayed()
+        compose.onNodeWithText("美颜·关闭").assertIsDisplayed()
         compose.onNodeWithTag("shutter").assertIsEnabled()
         compose.onNodeWithTag("creative_capture_menu").performClick()
         compose.onNodeWithTag("beauty_natural").performScrollTo().performClick()
@@ -553,6 +608,18 @@ class ViewfinderScreenTest {
     }
 
     @Test
+    fun landscapeCurrentActionUsesBothMeasuredLinesWithoutEllipsis() {
+        val action=shooterCue.copy(text="请露出脸，或靠近一点")
+        render(ui(GuidanceStage.Action(RequiredStep.SHOOTER,action,0)),windowSize=DpSize(914.dp,411.dp))
+        val layouts=mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+        compose.onNodeWithTag("guidance_text").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult){it(layouts)}
+        val layout=layouts.single()
+        assertEquals(action.text,layout.layoutInput.text.text)
+        assertTrue("current action must fit two measured lines",layout.lineCount<=2 && !layout.hasVisualOverflow)
+        assertTrue((0 until layout.lineCount).none(layout::isLineEllipsized))
+    }
+
+    @Test
     fun compactLandscapeUsesAdaptiveRailAndKeepsGuidanceSkipAndShutterReachable() {
         val opened = AtomicReference<String>()
         val recent = "android.resource://android/drawable/ic_menu_camera"
@@ -587,6 +654,7 @@ class ViewfinderScreenTest {
         assertTrue("recent photo escaped rail", thumbnail.right <= panel.right)
         compose.onNodeWithTag("recent_photo").performClick()
         compose.runOnIdle { assertEquals(recent, opened.get()) }
+        saveEvidence("landscape-compact")
     }
 
     @Test
@@ -622,10 +690,13 @@ class ViewfinderScreenTest {
         onBeautyPresetChange: (BeautyPreset) -> Unit = {},
         onLivePhotoChange: (Boolean) -> Unit = {},
         onModePreferenceChange: (CameraModePreference) -> Unit = {},
+        onCreativeEdit:(com.photocoach.app.creative.EditAdjustment)->Unit = {},
         fontScale: Float? = null,
         windowSize: DpSize? = null,
     ) {
         compose.setContent {
+            val panelOpen = remember { mutableStateOf(state.parameterPanelOpen) }
+            val edit=remember {mutableStateOf(state.creativeResult?.edit ?: com.photocoach.app.creative.EditAdjustment())}
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale ?: density.fontScale)) {
             PhotoCoachTheme {
@@ -633,10 +704,11 @@ class ViewfinderScreenTest {
                     modifier = windowSize?.let { Modifier.requiredSize(it.width, it.height) } ?: Modifier,
                 ) {
                 ViewfinderScreen(
-                    ui = state,
+                    ui = state.copy(parameterPanelOpen = panelOpen.value,creativeResult=state.creativeResult?.copy(edit=edit.value)),
                     tiltDegrees = 0f,
                     actions = ViewfinderActions(
                         onPreviewReady = {},
+                        onParameterPanelChange = { panelOpen.value = it },
                         onTapFocus = { _, _, _ -> },
                         onEv = {},
                         onSetFocal = {},
@@ -665,6 +737,7 @@ class ViewfinderScreenTest {
                         onHideFocusControls = {},
                         onDismissControlMessage = {},
                         onCreativeStyleChange = onCreativeStyleChange,
+                        onCreativeEdit={edit.value=it;onCreativeEdit(it)},
                         onThreeShotBurstChange = onThreeShotBurstChange,
                         onOpenCreativeResult = onOpenCreativeResult,
                         onSelectCreativePhoto = onSelectCreativePhoto,
