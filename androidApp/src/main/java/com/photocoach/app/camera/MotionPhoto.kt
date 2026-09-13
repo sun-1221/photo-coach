@@ -40,6 +40,13 @@ data class MotionPhotoContainerInfo(
 )
 
 object MotionPhotoAssembler {
+    internal fun verifySourceCompatibility(jpeg:File) {
+        require(jpeg.isFile && jpeg.length()>=4L)
+        RandomAccessFile(jpeg,"r").use {input ->
+            inspectJpeg(input.length(),byteAt={offset ->input.seek(offset);input.read()},
+                readBytes={offset,count ->ByteArray(count).also {input.seek(offset);input.readFully(it)}})
+        }
+    }
     private val XMP_HEADER = "http://ns.adobe.com/xap/1.0/\u0000".toByteArray(StandardCharsets.US_ASCII)
     private val FTYPE = byteArrayOf('f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte())
 

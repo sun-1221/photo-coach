@@ -10,7 +10,8 @@ enum class SaveStage {
     COMPLETE,
 }
 
-data class CaptureSaveProgress(val captureId: String, val snapshot: SaveSnapshot)
+data class CaptureSaveProgress(val captureId: String, val snapshot: SaveSnapshot, val originalUri: String? = null,
+    val captureReleased: Boolean = false)
 
 data class SavePlan(
     val motionPhotoRequested: Boolean,

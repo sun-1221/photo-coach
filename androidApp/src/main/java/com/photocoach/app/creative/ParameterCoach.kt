@@ -71,6 +71,8 @@ object ParameterCoach {
         intent: ShotIntent,
         context: ParameterContext,
     ): List<ParameterSuggestion> = buildList {
+        val inspiration = com.photocoach.coach.PhotoTechniqueEngine.cameraPositionInspiration()
+        add(physical(ParameterTarget.COMPOSITION, "机位灵感（手动尝试）", inspiration.reason, inspiration.text, 1))
         if (signals.lensObscured) {
             add(physical(ParameterTarget.COMPOSITION, "检查镜头", "画面持续偏暗且细节很少", "检查镜头是否被挡住，并轻擦镜片", 120))
         }
@@ -124,7 +126,7 @@ object ParameterCoach {
             }
         }
 
-        if (signals.faceCount == 1 && signals.focusOnFace && signals.poseAvailable && !context.aeAfLocked) {
+        if (signals.faceCount == 1 && signals.focusOnFace && signals.poseAvailable && context.capabilities.afLockSupported && context.capabilities.aeLockSupported && !context.aeAfLocked) {
             add(
                 actionable(
                     ParameterTarget.AE_AF_LOCK,
@@ -206,7 +208,7 @@ object ParameterCoach {
                     ParameterTarget.CAPTURE_PREFERENCE,
                     "抓住动作",
                     "人物动作正在变化",
-                    "一键改为拍摄优先",
+                    "一键改为速度优先",
                     ParameterAction.SetCapturePriority(CapturePriority.SPEED),
                     68,
                 ),
@@ -217,7 +219,7 @@ object ParameterCoach {
                     ParameterTarget.CAPTURE_PREFERENCE,
                     "优先合焦",
                     "人物相对静止",
-                    "一键改为对焦优先",
+                    "一键改为画质优先",
                     ParameterAction.SetCapturePriority(CapturePriority.FOCUS),
                     66,
                 ),

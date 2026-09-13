@@ -41,7 +41,8 @@ object CaptureSaver {
                     onAssetStage?.invoke(AssetPublishStage.VERIFY_PUBLISHED)
                     return existingUri
                 }
-                deleteConfirmed(resolver, existingUri)
+                return resumePending(resolver, existingUri, source, displayName, motionPhoto,
+                    onAssetStage = onAssetStage)
             }
         }
         val values = ContentValues().apply {
@@ -75,7 +76,7 @@ object CaptureSaver {
             return uri
         } catch (error: Throwable) {
             // The caller's journal retains this identity even if cleanup is refused.
-            if (!publishedVerified) runCatching { deleteConfirmed(resolver, uri) }.exceptionOrNull()?.let(error::addSuppressed)
+            if (!publishedVerified) runCatching { deletePendingOnly(resolver, uri) }.exceptionOrNull()?.let(error::addSuppressed)
             throw error
         }
     }
@@ -114,6 +115,20 @@ object CaptureSaver {
         return uri
     }
 
+    /** Recover fully written bytes even when the temporary package is gone. Never rewrite a
+     * published row, and verify identity/content before changing the pending visibility flag.
+     */
+    internal fun commitVerifiedPending(resolver:ContentResolver,uri:Uri,displayName:String,motionPhoto:Boolean):Uri {
+        if(runCatching {PublishedAssetVerifier.verifyPublished(resolver,uri,displayName,RELATIVE_DIR,motionPhoto)}.isSuccess)return uri
+        if(Build.VERSION.SDK_INT<Build.VERSION_CODES.Q ||
+            resolver.query(uri,arrayOf(MediaStore.Images.Media.IS_PENDING),null,null,null)?.use {it.moveToFirst() && it.getInt(0)==1}!=true)
+            throw IOException("原行不是可提交的 pending 资产；保留原行")
+        PublishedAssetVerifier.verifyPending(resolver,uri,motionPhoto,displayName,RELATIVE_DIR)
+        commit(resolver,uri)
+        PublishedAssetVerifier.verifyPublished(resolver,uri,displayName,RELATIVE_DIR,motionPhoto)
+        return uri
+    }
+
     fun deleteQuietly(resolver: ContentResolver, uri: Uri?) {
         if (uri != null) runCatching { resolver.delete(uri, null, null) }
     }
@@ -121,6 +136,17 @@ object CaptureSaver {
     fun deleteConfirmed(resolver: ContentResolver, uri: Uri?) {
         if (uri == null) return
         retireAsset({ rowExists(resolver, uri) }, { resolver.delete(uri, null, null) })
+    }
+
+    /** Automatic recovery never removes a published or unverifiable row. Explicit abandonment uses deleteConfirmed. */
+    internal fun deletePendingOnly(resolver: ContentResolver, uri: Uri?) {
+        if (uri == null || !rowExists(resolver, uri)) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q ||
+            resolver.query(uri, arrayOf(MediaStore.Images.Media.IS_PENDING), null, null, null)
+                ?.use { it.moveToFirst() && it.getInt(0) == 1 } != true) {
+            throw IOException("照片已发布或状态无法确认，保留原行供重试核验")
+        }
+        deleteConfirmed(resolver, uri)
     }
 
     private fun rowExists(resolver: ContentResolver, uri: Uri): Boolean =

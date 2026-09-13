@@ -53,8 +53,9 @@ object AssetIntegrityValidator {
 object PublishedAssetVerifier {
     private const val MOTION_HEADER_LIMIT = 512 * 1024
 
-    fun verifyPending(resolver: ContentResolver, uri: Uri, motionPhoto: Boolean): VerifiedAsset =
-        inspectContent(resolver, uri, expectedDisplayName = null, expectedPath = null, motionPhoto = motionPhoto)
+    fun verifyPending(resolver: ContentResolver, uri: Uri, motionPhoto: Boolean,
+        expectedDisplayName:String?=null,expectedPath:String?=null): VerifiedAsset =
+        inspectContent(resolver, uri, expectedDisplayName, expectedPath, motionPhoto, requirePublished = false)
 
     fun verifyPublished(
         resolver: ContentResolver,
@@ -62,7 +63,7 @@ object PublishedAssetVerifier {
         expectedDisplayName: String,
         expectedPath: String,
         motionPhoto: Boolean,
-    ): VerifiedAsset = inspectContent(resolver, uri, expectedDisplayName, expectedPath, motionPhoto)
+    ): VerifiedAsset = inspectContent(resolver, uri, expectedDisplayName, expectedPath, motionPhoto, requirePublished = true)
 
     private fun inspectContent(
         resolver: ContentResolver,
@@ -70,8 +71,11 @@ object PublishedAssetVerifier {
         expectedDisplayName: String?,
         expectedPath: String?,
         motionPhoto: Boolean,
+        requirePublished:Boolean,
     ): VerifiedAsset {
         val metadata = queryMetadata(resolver, uri)
+        if(requirePublished && Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q && metadata.pending!=0L)
+            throw IOException("MediaStore asset is not publicly committed")
         if (expectedDisplayName != null && metadata.displayName != expectedDisplayName) {
             throw IOException("published display name mismatch")
         }
@@ -101,17 +105,20 @@ object PublishedAssetVerifier {
             add(MediaStore.Images.Media.DISPLAY_NAME)
             add(MediaStore.Images.Media.MIME_TYPE)
             add(MediaStore.Images.Media.SIZE)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) add(MediaStore.Images.Media.RELATIVE_PATH)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                add(MediaStore.Images.Media.RELATIVE_PATH);add(MediaStore.Images.Media.IS_PENDING)
+            }
         }.toTypedArray()
         return resolver.query(uri, columns, null, null, null)?.use { cursor ->
             if (!cursor.moveToFirst()) throw IOException("published MediaStore row is missing")
             fun string(column: String): String? = cursor.getColumnIndex(column).takeIf { it >= 0 }?.let(cursor::getString)
-            fun long(column: String): Long = cursor.getColumnIndex(column).takeIf { it >= 0 }?.let(cursor::getLong) ?: -1L
+            fun long(column: String): Long = cursor.getColumnIndex(column).takeIf { it >= 0 && !cursor.isNull(it) }?.let(cursor::getLong) ?: -1L
             Metadata(
                 displayName = string(MediaStore.Images.Media.DISPLAY_NAME).orEmpty(),
                 mimeType = string(MediaStore.Images.Media.MIME_TYPE).orEmpty(),
                 length = long(MediaStore.Images.Media.SIZE),
                 relativePath = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) string(MediaStore.Images.Media.RELATIVE_PATH) else null,
+                pending = if(Build.VERSION.SDK_INT>=Build.VERSION_CODES.Q)long(MediaStore.Images.Media.IS_PENDING) else 0,
             )
         } ?: throw IOException("cannot query published MediaStore row")
     }
@@ -153,5 +160,5 @@ object PublishedAssetVerifier {
     }
 
     private fun normalizePath(value: String?): String = value.orEmpty().trim().trimEnd('/')
-    private data class Metadata(val displayName: String, val mimeType: String, val length: Long, val relativePath: String?)
+    private data class Metadata(val displayName: String, val mimeType: String, val length: Long, val relativePath: String?,val pending:Long)
 }

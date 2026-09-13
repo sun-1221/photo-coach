@@ -18,6 +18,9 @@ data class SaveJournal(
     val sequence: Int,
     val takenAtMillis: Long,
     val sourcePath: String,
+    val jpegPreparation:JpegPreparation?=null,
+    val jpegRawPath:String?=null,
+    val discarded:Boolean=false,
     val motionPath: String? = null,
     val packagedPath: String? = null,
     val displayName: String,
@@ -51,6 +54,7 @@ data class SaveJournal(
     val exportSourceUri: String? = null,
     val effectWasDownsampled: Boolean = false,
     val exportWarning: String? = null,
+    val researchContext: com.photocoach.app.research.ResearchCaptureContext? = null,
 ) {
     init {
         CaptureId(captureId)
@@ -84,7 +88,7 @@ class SaveJournalStore(private val directory: File) {
         val target = fileFor(record)
         val temporary = File(directory, "${target.name}.tmp")
         try {
-            temporary.writeText(json.encodeToString(record), Charsets.UTF_8)
+            temporary.outputStream().use { out -> out.write(json.encodeToString(record).toByteArray(Charsets.UTF_8)); out.fd.sync() }
             atomicReplace(temporary, target)
             return target
         } catch (error: Throwable) {

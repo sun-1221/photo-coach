@@ -8,7 +8,7 @@ import android.view.Surface
 
 /** Confined to one GL thread. Half-float FBO support is checked, never assumed. */
 internal class BeautyGlRenderer : AutoCloseable {
-    private val display = E.eglGetDisplay(E.EGL_DEFAULT_DISPLAY)
+    private val display = com.photocoach.app.camera.CameraEglDisplay.get()
     private lateinit var config: EGLConfig
     private var context: android.opengl.EGLContext = E.EGL_NO_CONTEXT
     private var scratch: EGLSurface = E.EGL_NO_SURFACE
@@ -19,7 +19,6 @@ internal class BeautyGlRenderer : AutoCloseable {
     private var size = 0 to 0
     init {
         try {
-        check(display != E.EGL_NO_DISPLAY && E.eglInitialize(display, IntArray(2),0,IntArray(2),0))
         initialized = true
         val configs = arrayOfNulls<EGLConfig>(1)
         check(E.eglChooseConfig(display, intArrayOf(E.EGL_RENDERABLE_TYPE,0x40,
@@ -161,7 +160,7 @@ internal class BeautyGlRenderer : AutoCloseable {
         E.eglMakeCurrent(display,E.EGL_NO_SURFACE,E.EGL_NO_SURFACE,E.EGL_NO_CONTEXT)
         if (scratch != E.EGL_NO_SURFACE) E.eglDestroySurface(display,scratch)
         if (context != E.EGL_NO_CONTEXT) E.eglDestroyContext(display,context)
-        E.eglReleaseThread(); E.eglTerminate(display)
+        E.eglReleaseThread()
         scratch = E.EGL_NO_SURFACE; context = E.EGL_NO_CONTEXT; initialized = false
     }
     private data class Target(val texture:Int,val framebuffer:Int,val w:Int,val h:Int)

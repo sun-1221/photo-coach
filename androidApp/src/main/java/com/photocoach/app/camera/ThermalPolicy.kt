@@ -5,7 +5,7 @@ import android.os.Build
 import android.os.PowerManager
 import androidx.core.content.ContextCompat
 
-enum class ThermalLevel { NORMAL, LIGHT, MODERATE, SEVERE, CRITICAL, UNKNOWN }
+enum class ThermalLevel { NORMAL, LIGHT, MODERATE, SEVERE, CRITICAL, EMERGENCY, SHUTDOWN, UNKNOWN }
 
 data class ThermalLoadPolicy(
     val analysisIntervalMs: Long,
@@ -27,6 +27,7 @@ object ThermalPolicy {
         ThermalLevel.MODERATE -> ThermalLoadPolicy(300, false, false, true, true, true, true)
         ThermalLevel.SEVERE -> ThermalLoadPolicy(600, false, false, true, false, false, true)
         ThermalLevel.CRITICAL -> ThermalLoadPolicy(1_000, false, false, true, false, false, false)
+        ThermalLevel.EMERGENCY, ThermalLevel.SHUTDOWN -> ThermalLoadPolicy(1_000, false, false, true, false, false, false, preserveShutter = false)
         ThermalLevel.UNKNOWN -> ThermalLoadPolicy(300, false, false, true, false, false, true)
     }
 
@@ -35,9 +36,9 @@ object ThermalPolicy {
         PowerManager.THERMAL_STATUS_LIGHT -> ThermalLevel.LIGHT
         PowerManager.THERMAL_STATUS_MODERATE -> ThermalLevel.MODERATE
         PowerManager.THERMAL_STATUS_SEVERE -> ThermalLevel.SEVERE
-        PowerManager.THERMAL_STATUS_CRITICAL,
-        PowerManager.THERMAL_STATUS_EMERGENCY,
-        PowerManager.THERMAL_STATUS_SHUTDOWN -> ThermalLevel.CRITICAL
+        PowerManager.THERMAL_STATUS_CRITICAL -> ThermalLevel.CRITICAL
+        PowerManager.THERMAL_STATUS_EMERGENCY -> ThermalLevel.EMERGENCY
+        PowerManager.THERMAL_STATUS_SHUTDOWN -> ThermalLevel.SHUTDOWN
         else -> ThermalLevel.UNKNOWN
     }
 }

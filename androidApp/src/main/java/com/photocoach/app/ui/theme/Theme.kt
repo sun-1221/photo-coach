@@ -145,7 +145,9 @@ fun PhotoCoachTheme(content: @Composable () -> Unit) {
             colorScheme = scheme,
             shapes = shapes,
             typography = typography,
-            content = content,
-        )
+        ) {
+            CompositionLocalProvider(androidx.compose.material3.LocalContentColor provides scheme.onSurface,
+                content = content)
+        }
     }
 }

@@ -18,8 +18,8 @@ enum class CaptureAspectRatio(val label: String) {
 }
 
 enum class CapturePriority(val label: String) {
-    FOCUS("对焦优先"),
-    SPEED("拍摄优先"),
+    FOCUS("画质优先"),
+    SPEED("速度优先"),
 }
 
 enum class SaveStrategy(val label: String) {

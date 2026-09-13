@@ -31,6 +31,7 @@ internal data class PoseSignalInput(
 )
 
 internal data class PoseSignalResult(
+    val known: Set<String> = emptySet(),
     val shouldersSquare: Boolean = false,
     val shouldersRaised: Boolean = false,
     val handsNeedPlacement: Boolean = false,
@@ -51,6 +52,16 @@ internal object PoseSignalClassifier {
         val rightAnkle = input.rightAnkle.visibleOrNull()
         val anklesVisible = leftAnkle != null && rightAnkle != null
         return PoseSignalResult(
+            known = buildSet {
+                if (torso != null && input.faceYawDegrees?.isFinite() == true) add("body-angle")
+                if (input.leftEar.visibleOrNull() != null && input.rightEar.visibleOrNull() != null) add("shoulders")
+                if (torso != null && input.leftWrist.visibleOrNull() != null && input.rightWrist.visibleOrNull() != null) add("hands")
+                if (anklesVisible && input.frameHeight > 0f) add("feet")
+                if (listOf(input.leftWrist, input.rightWrist, input.leftElbow, input.rightElbow,
+                    input.leftKnee, input.rightKnee, input.leftAnkle, input.rightAnkle).all { it.visibleOrNull() != null } &&
+                    input.frameWidth > 0f && input.frameHeight > 0f) add("frame-edge")
+                if (torso != null && anklesVisible && input.leftKnee.visibleOrNull() != null && input.rightKnee.visibleOrNull() != null) { add("seated"); add("walking") }
+            },
             shouldersSquare = shouldersSquare(input, upperBody, torso),
             shouldersRaised = shouldersRaised(input, upperBody, torso),
             handsNeedPlacement = torso?.let { handsNeedPlacement(input, it) } == true,
@@ -67,11 +78,9 @@ internal object PoseSignalClassifier {
     }
 
     private fun shouldersSquare(input: PoseSignalInput, upperBody: UpperBody, torso: Torso?): Boolean {
-        val faceYaw = input.faceYawDegrees ?: return false
+        val faceYaw = input.faceYawDegrees?.takeIf { it.isFinite() } ?: return false
         if (abs(faceYaw) > MAX_FORWARD_FACE_YAW_DEGREES) return false
-        if (torso != null && upperBody.shoulderSpan / torso.height < FRONT_SHOULDER_TO_TORSO_RATIO) return false
-        val shoulderDepthDifference = abs(upperBody.leftShoulder.z - upperBody.rightShoulder.z)
-        return shoulderDepthDifference / upperBody.shoulderSpan <= MAX_SQUARE_SHOULDER_DEPTH_RATIO
+        return torso != null && upperBody.shoulderSpan / torso.height >= FRONT_SHOULDER_TO_TORSO_RATIO
     }
 
     private fun shouldersRaised(input: PoseSignalInput, upperBody: UpperBody, torso: Torso?): Boolean {
@@ -152,7 +161,7 @@ internal object PoseSignalClassifier {
     }
 
     private fun PosePointSample?.visibleOrNull(): PosePointSample? =
-        this?.takeIf { it.likelihood >= MIN_LANDMARK_LIKELIHOOD }
+        this?.takeIf { it.likelihood >= MIN_LANDMARK_LIKELIHOOD && it.x.isFinite() && it.y.isFinite() }
 
     private fun distance(first: PosePointSample, second: PosePointSample): Float =
         hypot(first.x - second.x, first.y - second.y)
@@ -176,7 +185,6 @@ internal object PoseSignalClassifier {
     private const val MIN_TORSO_SIZE = 1f
     private const val MAX_FORWARD_FACE_YAW_DEGREES = 15f
     private const val FRONT_SHOULDER_TO_TORSO_RATIO = 0.6f
-    private const val MAX_SQUARE_SHOULDER_DEPTH_RATIO = 0.35f
     private const val RAISED_SHOULDER_TO_REFERENCE_RATIO = 0.28f
     private const val BOTTOM_EDGE_RATIO = 0.94f
     private const val JOINT_EDGE_RATIO = 0.025f

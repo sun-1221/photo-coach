@@ -27,15 +27,16 @@ internal class CameraSessionCoordinator(
 ) {
     private val ownedUseCases = mutableSetOf<UseCase>()
 
-    fun isSupported(selector: CameraSelector, video: VideoCapture<Recorder>): Boolean = runCatching {
+    fun isSupported(selector: CameraSelector, video: VideoCapture<Recorder>,videoEffect:CameraEffect?=null): Boolean = runCatching {
         provider.getCameraInfo(selector).isSessionConfigSupported(
             SessionConfig.Builder(listOf(preview, analysis, capture, video))
                 .setViewPort(viewPort)
+                .apply {videoEffect?.let {addEffect(it)};effect()?.let {addEffect(it)}}
                 .build(),
         )
     }.getOrDefault(true)
 
-    fun bind(selector: CameraSelector, video: VideoCapture<Recorder>?): Camera {
+    fun bind(selector: CameraSelector, video: VideoCapture<Recorder>?,videoEffect:CameraEffect?=null): Camera {
         val group = UseCaseGroup.Builder()
             .setViewPort(viewPort)
             .addUseCase(preview)
@@ -43,6 +44,7 @@ internal class CameraSessionCoordinator(
             .addUseCase(capture)
             .apply { if (video != null) addUseCase(video) }
             .apply { effect()?.let(::addEffect) }
+            .apply { videoEffect?.let(::addEffect) }
             .build()
         // Register before binding: partially failed attempts still belong to this coordinator.
         ownedUseCases.addAll(group.useCases)

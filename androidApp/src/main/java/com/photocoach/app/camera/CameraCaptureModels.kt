@@ -47,4 +47,6 @@ data class CaptureSpec(
     val beautyPreset: BeautyPreset = BeautyPreset.OFF,
     val beautyEngineVersion: Int = BeautyPreset.ENGINE_VERSION,
     val batchId: String? = null,
+    val holdBatchCapture: Boolean = false,
+    val researchContext: com.photocoach.app.research.ResearchCaptureContext? = null,
 )

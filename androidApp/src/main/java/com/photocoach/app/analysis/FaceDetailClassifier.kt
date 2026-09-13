@@ -14,6 +14,7 @@ data class FaceDetailInput(
 )
 
 data class FaceDetailSignals(
+    val eyesKnown: Boolean = false,
     val faceTurnedAway: Boolean = false,
     val eyesLikelyClosed: Boolean = false,
 )
@@ -29,10 +30,11 @@ object FaceDetailClassifier {
 
         val leftEye = input.leftEyeOpenProbability
         val rightEye = input.rightEyeOpenProbability
-        if (leftEye == null || rightEye == null) return FaceDetailSignals()
+        if (leftEye == null || rightEye == null || !leftEye.isFinite() || !rightEye.isFinite() ||
+            leftEye !in 0f..1f || rightEye !in 0f..1f || yaw == null || !yaw.isFinite()) return FaceDetailSignals()
 
         val eyesLikelyClosed = minOf(leftEye, rightEye) <= EYE_OPEN_THRESHOLD
-        if (eyesLikelyClosed) return FaceDetailSignals(eyesLikelyClosed = true)
-        return FaceDetailSignals()
+        if (eyesLikelyClosed) return FaceDetailSignals(eyesKnown = true, eyesLikelyClosed = true)
+        return FaceDetailSignals(eyesKnown = true)
     }
 }

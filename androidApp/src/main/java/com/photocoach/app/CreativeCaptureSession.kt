@@ -87,6 +87,7 @@ internal class CreativeCaptureSession(
         return CaptureSpec(
             captureId = activeId,
             batchId = requireNotNull(batchId).value,
+            holdBatchCapture = isBurst,
             sequence = capturedCount + 1,
             takenAtMillis = captureTakenAtMillis,
             style = captureStyle,

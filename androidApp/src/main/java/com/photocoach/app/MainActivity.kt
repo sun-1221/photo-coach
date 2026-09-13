@@ -57,6 +57,10 @@ class MainActivity : ComponentActivity() {
     private val viewModel: AppViewModel by viewModels()
     private lateinit var camera: CameraBinder
     private lateinit var tts: GuidanceTts
+    internal val speechActive: Boolean get() = tts.isSpeaking
+    internal val submittedUtterances: Long get() = tts.submittedUtterances
+    internal val stoppedWhileSpeaking: Long get() = tts.stoppedWhileSpeaking
+    internal val cameraTimestampsRealtime: Boolean get() = camera.timestampsRealtime
     private lateinit var thermalMonitor: ThermalStateMonitor
     private val thermalRebindGate = ThermalRebindGate()
     private var previewView: PreviewView? = null
@@ -88,6 +92,7 @@ class MainActivity : ComponentActivity() {
         thermalMonitor = ThermalStateMonitor(this) { level ->
             camera.updateThermalLevel(level)
             viewModel.onThermalLevel(level)
+            if (!com.photocoach.app.camera.ThermalPolicy.forLevel(level).preserveShutter) cancelScheduledCapture()
             if (
                 permissionState == PermissionState.GRANTED &&
                 thermalRebindGate.onThermalChanged(cameraOperationInProgress())
@@ -107,7 +112,9 @@ class MainActivity : ComponentActivity() {
                     ui.voiceEnabled,
                       ui.subjectCaptionsEnabled,
                       ui.parameterPanelOpen,
+                      ui.researchRoundPreparing,
                   ) {
+                      if (ui.researchRoundPreparing) { tts.stop(); return@LaunchedEffect }
                       if (ui.parameterPanelOpen) { tts.stop(); return@LaunchedEffect }
                     val activePrompt = when (ui.guidance.stage) {
                         is GuidanceStage.Action,
@@ -127,12 +134,13 @@ class MainActivity : ComponentActivity() {
                     val cue = viewModel.cueForSpeech()
                     if (cue == null) return@LaunchedEffect
                     viewModel.onPlaybackStarting()
+                    val playbackToken = viewModel.playbackToken()
                     tts.speak(
                         cue = cue,
                         muted = false,
-                        onUnavailable = viewModel::onPlaybackUnavailable,
+                        onUnavailable = { viewModel.onPlaybackUnavailable(playbackToken) },
                         onFailure = viewModel::markTtsFailed,
-                        onFinished = viewModel::onPlaybackFinished,
+                        onFinished = { viewModel.onPlaybackFinished(playbackToken) },
                     )
                 }
                 LaunchedEffect(ui.sceneApply?.generation) {
@@ -209,7 +217,7 @@ class MainActivity : ComponentActivity() {
         },
         onUnlockFocus = {
             camera.unlockAeAf()
-            viewModel.onFocusUnlocked()
+
         },
         onToggleFlash = viewModel::toggleFlash,
         onSelectIntent = viewModel::selectIntent,
@@ -221,8 +229,7 @@ class MainActivity : ComponentActivity() {
         onContinueBurst = { if (viewModel.continueBurst()) captureNextShot() },
         onParameterPanelChange = viewModel::setParameterPanelOpen,
         onDiscardSave = {
-            camera.discardPending()
-            viewModel.abandonSaveFailure()
+            if(camera.discardPending())viewModel.abandonSaveFailure()
         },
         onRetryCamera = ::prepareAndRebind,
         onOpenSettings = ::openAppSettings,
@@ -266,7 +273,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) {
-            if (cameraConsented && permissionState == PermissionState.GRANTED) capture()
+            if (event?.repeatCount == 0 && cameraConsented && permissionState == PermissionState.GRANTED) capture()
             return true
         }
         return super.onKeyDown(keyCode, event)
@@ -346,6 +353,7 @@ class MainActivity : ComponentActivity() {
                     thermalRebindGate.onThermalChanged(true)
                     return@launch
                 }
+                val researchGeneration = viewModel.ui.value.sceneApply?.generation
                 val capabilities = camera.bind(
                     owner = this@MainActivity,
                     previewView = view,
@@ -356,6 +364,7 @@ class MainActivity : ComponentActivity() {
                         viewModel.extras(camera.hasTelephotoPreset())
                     },
                     onSignals = viewModel::onFrame,
+            onLockState = viewModel::onLockState,
                     onLiveFallback = viewModel::onLiveFallback,
                     onBeautyFallback = viewModel::onBeautyFallback,
                     onBeautyPreviewState = viewModel::onBeautyPreviewState,
@@ -364,7 +373,10 @@ class MainActivity : ComponentActivity() {
                 camera.setFlash(viewModel.ui.value.flashSetting)
                 viewModel.onCameraReady(capabilities)
                 viewModel.onExposureSessionStarted()
-                if (capabilities.exposure.supported) camera.setExposure(viewModel.currentEv(), viewModel::onExposureResult)
+                if (capabilities.exposure.supported) camera.setExposure(viewModel.currentEv()) { result ->
+                    viewModel.onExposureResult(result)
+                    if (result.isSuccess) viewModel.onResearchParametersApplied(researchGeneration)
+                } else viewModel.onResearchParametersApplied(researchGeneration)
                 viewModel.onInterruptedSaves(camera.recoveryFailures)
             } catch (error: Exception) {
                 viewModel.markCameraError(error.message ?: getString(R.string.camera_busy))
@@ -427,7 +439,7 @@ class MainActivity : ComponentActivity() {
         val ui = viewModel.ui.value
         return CaptureAdmissionState(
             cameraAvailable = permissionState == PermissionState.GRANTED && ui.cameraError == null,
-            shutterEnabled = ui.guidance.shutterEnabled,
+            shutterEnabled = ui.guidance.shutterEnabled && !ui.researchRoundPreparing && com.photocoach.app.camera.ThermalPolicy.forLevel(ui.thermalLevel).preserveShutter,
             captureInProgress = ui.guidance.stage is GuidanceStage.Capturing,
             saveFailureVisible = ui.guidance.stage is GuidanceStage.SaveFailed,
             resultVisible = ui.creativeResultVisible,
@@ -441,60 +453,48 @@ class MainActivity : ComponentActivity() {
 
     private fun captureNextShot() {
         val spec = viewModel.activeCaptureSpec() ?: run {
-            viewModel.onSaveFailed(IllegalStateException("拍摄标识不可用"), retryAvailable = false)
+            failureForCapture(null).captureError(IllegalStateException("拍摄标识不可用"))
             return
         }
-        val ui = viewModel.ui.value
-        val face = ui.overlay?.faceRects?.maxByOrNull { it.width() * it.height() }
-        if (ui.capturePriority == CapturePriority.FOCUS) {
-            camera.prepareQualityCapture(face?.centerX(), face?.centerY()) {
-                performCapture(spec)
-            }
-        } else {
-            performCapture(spec)
-        }
+        performCapture(spec)
     }
 
     private fun performCapture(spec: CaptureSpec) {
+        val failure = failureForCapture(spec.captureId.value)
         camera.capture(
             spec = spec,
             onCaptureAccepted = { viewModel.recordCaptureAccepted(spec) },
             onSaveProgress = viewModel::onSaveProgress,
-            onSaved = { photo ->
-                if (viewModel.onPhotoCaptured(photo)) {
-                    if (isDestroyed) viewModel.onSaveFailed(IllegalStateException("相机页面已关闭，连拍已停止；已拍原片已保留"), retryAvailable = false)
-                    else captureNextShot()
-                } else if (!isDestroyed) applyDeferredThermalRebind()
-            },
-            onSaveError = {
-                viewModel.onSaveFailed(it, retryAvailable = !isDestroyed)
-                if (!isDestroyed) applyDeferredThermalRebind()
-            },
-            onCaptureError = {
-                viewModel.onSaveFailed(it, retryAvailable = false)
-                if (!isDestroyed) applyDeferredThermalRebind()
-            },
+            onSaved = ::onCapturedPhoto,
+            onSaveError = failure::saveError,
+            onCaptureError = failure::captureError,
         )
     }
 
     private fun retrySave() {
-        if (!viewModel.beginRetrySave()) return
-        val started = camera.retrySave(
-            onSaved = { photo ->
-                if (viewModel.onPhotoCaptured(photo)) {
-                    if (isDestroyed) viewModel.onSaveFailed(IllegalStateException("相机页面已关闭，连拍已停止；已拍原片已保留"), retryAvailable = false)
-                    else captureNextShot()
-                } else if (!isDestroyed) applyDeferredThermalRebind()
-            },
-            onSaveError = {
-                viewModel.onSaveFailed(it, retryAvailable = !isDestroyed)
-                if (!isDestroyed) applyDeferredThermalRebind()
-            },
+        retryCapturedSave(
+            captureId = camera.pendingCaptureId,
+            begin = viewModel::beginRetrySave,
+            retry = camera::retrySave,
+            saved = ::onCapturedPhoto,
+            failureFor = ::failureForCapture,
         )
-        if (!started) {
-            viewModel.onSaveFailed(IllegalStateException("待保存照片不可用"), retryAvailable = false)
-            applyDeferredThermalRebind()
-        }
+    }
+
+    private fun failureForCapture(captureId: String?) = CaptureSaveFailureHandler(
+        captureId = captureId,
+        isActive = { !isDestroyed },
+        report = viewModel::onSaveFailed,
+        refreshRecovery = { camera.loadRecoveryRecords(viewModel::onInterruptedSaves) },
+        settled = ::applyDeferredThermalRebind,
+    )
+
+    private fun onCapturedPhoto(photo: com.photocoach.app.camera.CapturedPhoto) {
+        if (viewModel.onPhotoCaptured(photo)) {
+            if (isDestroyed) failureForCapture(photo.captureId.value)
+                .captureError(IllegalStateException("相机页面已关闭，连拍已停止；已拍原片已保留"))
+            else captureNextShot()
+        } else if (!isDestroyed) applyDeferredThermalRebind()
     }
 
     private fun cameraOperationInProgress(): Boolean =
@@ -554,7 +554,7 @@ class MainActivity : ComponentActivity() {
             }
             ParameterAction.UnlockAeAf -> {
                 camera.unlockAeAf()
-                viewModel.onFocusUnlocked()
+
             }
             is ParameterAction.SetMode -> {
                 val preference = CameraModePreference.entries.firstOrNull { it.requestedMode == action.mode }

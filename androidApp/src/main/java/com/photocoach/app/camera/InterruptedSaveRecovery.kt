@@ -21,6 +21,8 @@ internal class InterruptedSaveRecovery(
     private val journalStore: SaveJournalStore,
     private val recipeStore: EditRecipeStore,
     private val creativeProcessor: CreativeImageProcessor,
+    private val pendingSources: PendingSourceStore? = null,
+    private val researchRecoveryStore: com.photocoach.app.research.ResearchRecoveryStore? = null,
     private val wallClockMillis: () -> Long = System::currentTimeMillis,
 ) {
     fun recover(onlyKey: String? = null): List<SaveJournal> {
@@ -44,12 +46,15 @@ internal class InterruptedSaveRecovery(
 
     private fun exportRunner() = ExportTransactionRunner(journalStore,
         generate = { record ->
-            val processed = creativeProcessor.process(resolver, Uri.parse(requireNotNull(record.exportSourceUri)),
-                CreativeStyle.valueOf(record.style),
-                EditAdjustment(record.exposureStops, record.contrast, record.saturation, record.temperature,
-                    record.tint, record.fade, record.styleStrength), DerivativeQuality.valueOf(record.derivativeQuality),
-                beautyPreset = BeautyPreset.requireSupported(record.beautyPreset, record.beautyEngineVersion))
-            GeneratedExport(processed.file, processed.wasDownsampled, processed.beautyWarning)
+            fun generate(): GeneratedExport {
+                val processed = creativeProcessor.process(resolver, Uri.parse(requireNotNull(record.exportSourceUri)),
+                    CreativeStyle.valueOf(record.style),
+                    EditAdjustment(record.exposureStops, record.contrast, record.saturation, record.temperature,
+                        record.tint, record.fade, record.styleStrength), DerivativeQuality.valueOf(record.derivativeQuality),
+                    beautyPreset = BeautyPreset.requireSupported(record.beautyPreset, record.beautyEngineVersion))
+                return GeneratedExport(processed.file, processed.wasDownsampled, processed.beautyWarning)
+            }
+            pendingSources?.generate { generate() } ?: generate()
         },
         publish = { record, file, pending ->
             CaptureSaver.publish(resolver, file, record.displayName, record.takenAtMillis,
@@ -73,30 +78,43 @@ internal class InterruptedSaveRecovery(
         var record = journalStore.read(originalRecord) ?: return
         var recoveryStage: SaveStage? = null
         runCatching {
-            val source = File(record.sourcePath)
-            val packaged = record.packagedPath?.let(::File)?.takeIf(File::isFile)
-            var motionPhoto = record.motionPhotoRequested && !record.motionPhotoFallback && packaged != null
-            var primary = if (motionPhoto) packaged else source.takeIf(File::isFile)
-            if (SaveStage.COMPLETE.name in record.completedStages) {
-                cleanupRecoveredRecord(record)
-                journalStore.delete(record)
-                return@runCatching
+            if(record.discarded) {
+                discardCaptureSources(resolver,journalStore,record)
+                return
             }
-            if (
-                record.originalUri != null &&
-                !record.verifiedAssetStages.containsAssetStage(
-                    PublishedAssetKind.ORIGINAL,
-                    AssetPublishStage.VERIFY_PUBLISHED,
-                )
-            ) {
+            var source = File(record.sourcePath)
+            record.jpegPreparation?.let {preparation ->
+                if(preparation.motionCompatible!=true && runCatching {MotionPhotoAssembler.verifySourceCompatibility(File(preparation.rawPath))}.isFailure) {
+                    record=record.copy(motionPhotoFallback=true)
+                    journalStore.write(record)
+                }
+                val budget=pendingSources ?: PendingSourceStore(source.parentFile!!)
+                budget.reserve(creative=false,live=true).use {preparation.prepare(source)}
+                record=record.copy(jpegPreparation=null,jpegRawPath=record.jpegRawPath ?: preparation.rawPath)
+                journalStore.write(record)
+            }
+            pendingSources?.let { store ->
+                if (source.isFile && source.length() > 0) {
+                    val durable = store.preserveLegacy(source)
+                    if (durable != source) {
+                        record = record.copy(sourcePath = durable.absolutePath)
+                        journalStore.write(record) // Keep old source until new path is durably journaled.
+                        source.delete()
+                        source = durable
+                    }
+                }
+            }
+            val packaged = record.packagedPath?.let(::File)?.takeIf(File::isFile)
+            var motionPhoto = record.motionPhotoRequested && !record.motionPhotoFallback
+            var primary = if (motionPhoto) packaged else source.takeIf { it.isFile && it.length() > 0 }
+            if (record.originalUri != null) {
                 recoveryStage = SaveStage.ORIGINAL_PUBLISH
                 val publishedUri = Uri.parse(record.originalUri)
                 runCatching {
-                    PublishedAssetVerifier.verifyPublished(
+                    CaptureSaver.commitVerifiedPending(
                         resolver,
                         publishedUri,
                         record.displayName,
-                        CaptureSaver.RELATIVE_DIR,
                         motionPhoto,
                     )
                 }.onSuccess {
@@ -108,24 +126,32 @@ internal class InterruptedSaveRecovery(
                         ),
                     )
                     journalStore.write(record)
-                }.onFailure {
-                    deleteFailedAsset(publishedUri)
-                    record = record.copy(
-                        originalUri = null,
-                        completedStages = record.completedStages - SaveStage.ORIGINAL_PUBLISH.name,
-                        verifiedAssetStages = record.verifiedAssetStages.withoutAssetStages(PublishedAssetKind.ORIGINAL),
-                    )
-                    journalStore.write(record)
-                }
+                }.getOrThrow()
             }
             if (record.originalUri == null) {
                 recoveryStage = SaveStage.ORIGINAL_PUBLISH
                 if (primary == null) {
-                    deleteFailedAsset(record.pendingUri?.let(Uri::parse))
-                    deleteFailedAsset(record.derivativePendingUri?.let(Uri::parse))
-                    cleanupRecoveredRecord(record)
-                    journalStore.delete(record)
-                    return@runCatching
+                    val known = record.pendingUri?.let(Uri::parse)
+                    val recovered=known?.let {runCatching {CaptureSaver.commitVerifiedPending(resolver,it,record.displayName,motionPhoto)}}
+                    if (recovered?.isSuccess == true) {
+                        record = record.copy(originalUri = known.toString(), pendingUri = null,
+                            completedStages = record.completedStages + SaveStage.ORIGINAL_PUBLISH.name,
+                            verifiedAssetStages = record.verifiedAssetStages + assetStageKey(PublishedAssetKind.ORIGINAL, AssetPublishStage.VERIFY_PUBLISHED))
+                        journalStore.write(record)
+                        // Re-enter from the persisted published URI, without requiring or republishing the source.
+                        recoverRecord(record)
+                        return@runCatching
+                    }
+                    if(motionPhoto && source.isFile && source.length()>0) {
+                        // Only an uncommitted, safely retired row may be replaced by JPEG.
+                        deleteFailedAsset(known)
+                        record=record.copy(pendingUri=null,packagedPath=null,motionPhotoFallback=true,
+                            displayName=CaptureIdentity.displayName(CaptureId(record.captureId),CaptureAssetKind.ORIGINAL,record.sequence,record.takenAtMillis),
+                            verifiedAssetStages=record.verifiedAssetStages.withoutAssetStages(PublishedAssetKind.ORIGINAL),
+                            completedStages=record.completedStages-SaveStage.MOTION_PACKAGE.name-SaveStage.ORIGINAL_PUBLISH.name)
+                        journalStore.write(record)
+                        motionPhoto=false;primary=source
+                    } else throw recovered?.exceptionOrNull() ?: IllegalStateException("捕获源文件已丢失，无法恢复；不会重新拍摄。已有相册照片不会删除")
                 }
                 if (record.pendingUri == null) {
                     record = record.copy(displayName = if (motionPhoto) {
@@ -225,6 +251,10 @@ internal class InterruptedSaveRecovery(
                 )
                 journalStore.write(record)
             }
+            record.researchContext?.let { context ->
+                requireNotNull(researchRecoveryStore) { "research recovery receipt store unavailable" }.record(
+                    com.photocoach.app.research.ResearchRecoveryReceipt(record.captureId,context))
+            }
             if (SaveStage.RECIPE_WRITE.name !in record.completedStages) {
                 recoveryStage = SaveStage.RECIPE_WRITE
                 val style = runCatching { CreativeStyle.valueOf(record.style) }.getOrDefault(CreativeStyle.ORIGINAL)
@@ -254,11 +284,7 @@ internal class InterruptedSaveRecovery(
             }
             if (
                 record.derivativeRequested &&
-                record.derivativeUri != null &&
-                !record.verifiedAssetStages.containsAssetStage(
-                    PublishedAssetKind.DERIVATIVE,
-                    AssetPublishStage.VERIFY_PUBLISHED,
-                )
+                record.derivativeUri != null
             ) {
                 recoveryStage = SaveStage.DERIVATIVE_PUBLISH
                 val publishedUri = Uri.parse(record.derivativeUri)
@@ -269,11 +295,10 @@ internal class InterruptedSaveRecovery(
                     record.takenAtMillis,
                 )
                 runCatching {
-                    PublishedAssetVerifier.verifyPublished(
+                    CaptureSaver.commitVerifiedPending(
                         resolver,
                         publishedUri,
                         displayName,
-                        CaptureSaver.RELATIVE_DIR,
                         motionPhoto = false,
                     )
                 }.onSuccess {
@@ -285,15 +310,7 @@ internal class InterruptedSaveRecovery(
                         ),
                     )
                     journalStore.write(record)
-                }.onFailure {
-                    deleteFailedAsset(publishedUri)
-                    record = record.copy(
-                        derivativeUri = null,
-                        completedStages = record.completedStages - SaveStage.DERIVATIVE_PUBLISH.name,
-                        verifiedAssetStages = record.verifiedAssetStages.withoutAssetStages(PublishedAssetKind.DERIVATIVE),
-                    )
-                    journalStore.write(record)
-                }
+                }.getOrThrow()
             }
             if (record.derivativeRequested && record.derivativeUri == null && !source.isFile) {
                 recoveryStage = SaveStage.DERIVATIVE_GENERATE
@@ -318,8 +335,11 @@ internal class InterruptedSaveRecovery(
                     record.styleStrength,
                 )
                 val derivative = record.derivativePath?.let(::File)?.takeIf(File::isFile)
-                    ?: creativeProcessor.process(source, style, edit, quality,
-                        beautyPreset = BeautyPreset.requireSupported(record.beautyPreset, record.beautyEngineVersion)).file
+                    ?: run {
+                        fun generate() = creativeProcessor.process(source, style, edit, quality,
+                            beautyPreset = BeautyPreset.requireSupported(record.beautyPreset, record.beautyEngineVersion)).file
+                        pendingSources?.generate { generate() } ?: generate()
+                    }
                 record = record.copy(
                     derivativePath = derivative.absolutePath,
                     completedStages = record.completedStages + SaveStage.DERIVATIVE_GENERATE.name,
@@ -395,14 +415,6 @@ internal class InterruptedSaveRecovery(
             journalStore.delete(record)
         }.onFailure { error ->
             runCatching {
-                if (recoveryStage == SaveStage.ORIGINAL_PUBLISH && record.originalUri == null) {
-                    deleteFailedAsset(record.pendingUri?.let(Uri::parse))
-                    record = record.copy(pendingUri = null)
-                }
-                if (recoveryStage == SaveStage.DERIVATIVE_PUBLISH && record.derivativeUri == null) {
-                    deleteFailedAsset(record.derivativePendingUri?.let(Uri::parse))
-                    record = record.copy(derivativePendingUri = null)
-                }
                 journalStore.write(
                     record.copy(
                         failedStage = recoveryStage?.name,
@@ -415,12 +427,13 @@ internal class InterruptedSaveRecovery(
 
     // Do not forget a row or publish a replacement when MediaStore refuses its deletion.
     private fun deleteFailedAsset(uri: Uri?) {
-        CaptureSaver.deleteConfirmed(resolver, uri)
+        CaptureSaver.deletePendingOnly(resolver, uri)
     }
 
     private fun cleanupRecoveredRecord(record: SaveJournal) {
-        listOfNotNull(record.sourcePath, record.motionPath, record.packagedPath, record.derivativePath)
+        listOfNotNull(record.sourcePath, record.motionPath, record.packagedPath, record.derivativePath,
+            record.jpegRawPath,record.jpegPreparation?.rawPath,JpegPreparation.temporaryFor(File(record.sourcePath)).path)
             .map(::File)
-            .forEach(File::delete)
+            .forEach {file ->check(!file.exists() || file.delete()){ "已发布照片的暂存清理待重试" }}
     }
 }

@@ -26,8 +26,11 @@ class CoachAnalyzer(
     private val minimumFrameIntervalMs: () -> Long = { 0L },
     private val poseAndBackgroundEnabled: () -> Boolean = { true },
     private val onBeautyFrame: ((BeautyFaceFrame) -> Unit)? = null,
+    private val captureTimeIsRealtime: () -> Boolean = { true },
 ) : ImageAnalysis.Analyzer {
 
+    val sessionId = nextSession.incrementAndGet()
+    private var lastResultNs = Long.MIN_VALUE
     private val resultExecutor = ClosingAnalyzerExecutor(executor)
 
     private val faceDetector = FaceDetection.getClient(coachFaceDetectorOptions())
@@ -72,7 +75,8 @@ class CoachAnalyzer(
 
     private fun emitResult(timestampNs: Long, faces: List<Face>, pose: Pose?, backgroundEnabled: Boolean) {
         val frame = frameMetadata.take(timestampNs) ?: return
-        if (closed) return
+        if (closed || timestampNs <= lastResultNs) return
+        lastResultNs = timestampNs
         if (onBeautyFrame != null) {
             val transform = frame.sensorToAnalysis
             onBeautyFrame.invoke(if (transform == null) {
@@ -112,6 +116,8 @@ class CoachAnalyzer(
         } != null && frame.stats.meanY.isFinite() && frame.stats.highlightRatio.isFinite()
         onFrame(
             QualitySignalAssembler.assemble(signals.copy(
+                analysisSessionId = sessionId,
+                captureTimestampNs = timestampNs,
                 faceMetered = extra.faceMetered,
                 walkingMotionStable = temporal.walkingMotionStable,
                 subjectMotionHigh = motion.subjectMotionHigh,
@@ -129,7 +135,7 @@ class CoachAnalyzer(
         try {
             val timestampMs = image.imageInfo.timestamp / 1_000_000L
             val interval = minimumFrameIntervalMs().coerceAtLeast(0L)
-            if (lastAcceptedFrameMs != Long.MIN_VALUE && timestampMs - lastAcceptedFrameMs < interval) {
+            if (lastAcceptedFrameMs != Long.MIN_VALUE && timestampMs <= lastAcceptedFrameMs || lastAcceptedFrameMs != Long.MIN_VALUE && timestampMs - lastAcceptedFrameMs < interval) {
                 image.close()
                 return
             }
@@ -147,7 +153,8 @@ class CoachAnalyzer(
             }
             val lensObscured = lensObstructionDetector.update(stats)
             frameMetadata.put(image.imageInfo.timestamp,
-                AnalysisFrame(stats, width, height, timestampMs, image.imageInfo.timestamp, sensorToAnalysis, lensObscured))
+                AnalysisFrame(stats, width, height, timestampMs, image.imageInfo.timestamp, sensorToAnalysis, lensObscured,
+                    if (captureTimeIsRealtime()) timestampMs else android.os.SystemClock.elapsedRealtime() - 10_000L))
             if (poseAndBackgroundEnabled()) {
                 fullMlKit.analyze(image)
             } else {
@@ -158,6 +165,8 @@ class CoachAnalyzer(
             image.close()
         }
     }
+
+    companion object { private val nextSession = java.util.concurrent.atomic.AtomicLong() }
 
     override fun getTargetCoordinateSystem(): Int = fullMlKit.targetCoordinateSystem
 

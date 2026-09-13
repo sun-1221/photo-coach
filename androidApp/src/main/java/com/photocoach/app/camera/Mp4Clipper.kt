@@ -37,6 +37,7 @@ object Mp4Clipper {
                 maximumSampleSize = max(maximumSampleSize, format.integerOrNull(MediaFormat.KEY_MAX_INPUT_SIZE) ?: 0)
             }
             if (trackMap.isEmpty()) throw IOException("Motion Photo 临时视频没有视频轨")
+            if (trackMap.size != 1) throw IOException("Motion Photo 临时视频必须只有一个视频轨")
             createdMuxer.start()
 
             var firstWrittenUs = Long.MAX_VALUE
@@ -72,6 +73,8 @@ object Mp4Clipper {
                 extractor.unselectTrack(inputTrack)
             }
             if (firstWrittenUs == Long.MAX_VALUE || lastWrittenUs < firstWrittenUs) throw IOException("无法裁剪 Motion Photo 视频窗口")
+            val coverSourceUs = Math.addExact(window.presentationTimestampUs, window.startUs)
+            if (coverSourceUs !in firstWrittenUs..lastWrittenUs) throw IOException("封面时刻不在实际保留的视频范围内")
             createdMuxer.stop()
             muxer = null
             createdMuxer.release()
@@ -80,7 +83,7 @@ object Mp4Clipper {
             }
             return Mp4ClipResult(
                 file = output,
-                presentationTimestampUs = (window.presentationTimestampUs + window.startUs - firstWrittenUs).coerceAtLeast(0L),
+                presentationTimestampUs = Math.subtractExact(coverSourceUs, firstWrittenUs),
                 durationUs = (lastWrittenUs - firstWrittenUs).coerceAtLeast(1L),
             )
         } catch (error: Throwable) {

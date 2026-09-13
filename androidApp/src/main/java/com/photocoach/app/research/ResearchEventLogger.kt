@@ -1,7 +1,11 @@
 package com.photocoach.app.research
 
 import java.io.File
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 
+@Serializable
 data class ResearchEvent(
     val type: String,
     val occurredAtMs: Long,
@@ -12,6 +16,11 @@ data class ResearchEvent(
     val cueId: String? = null,
     val result: String? = null,
     val sessionId: String = "unknown",
+    val condition: String = "NONE", val scene: String = "", val configurationId: String = "", val buildVersion: String = "",
+    val captureId: String? = null,
+    val sequence: Long? = null,
+    val previousFailedWrites: Long = 0,
+    val previousDroppedEvents: Long = 0,
 )
 
 class ResearchEventLogger(
@@ -20,10 +29,11 @@ class ResearchEventLogger(
 ) {
     @Volatile var failedWrites: Long = 0
         private set
+    private var nextSequence = 0L
 
     @Synchronized
     fun record(event: ResearchEvent): Boolean = try {
-        val line = event.toJsonLine() + "\n"
+        val line = Json.encodeToString(event.copy(sequence = nextSequence++, previousFailedWrites = failedWrites)) + "\n"
         check(line.length <= 16_384 && file.length() + line.toByteArray(Charsets.UTF_8).size <= maximumBytes)
         file.parentFile?.mkdirs()
         file.appendText(line, Charsets.UTF_8)
@@ -33,43 +43,4 @@ class ResearchEventLogger(
         false
     }
 
-    private fun ResearchEvent.toJsonLine(): String = buildString {
-        append('{')
-        field("type", type)
-        field("sessionId", sessionId)
-        field("previousFailedWrites", failedWrites)
-        field("occurredAtMs", occurredAtMs)
-        field("elapsedMs", elapsedMs)
-        field("intent", intent)
-        field("roundId", roundId)
-        field("stage", stage)
-        cueId?.let { field("cueId", it) }
-        result?.let { field("result", it) }
-        if (lastOrNull() == ',') deleteCharAt(lastIndex)
-        append('}')
-    }
-
-    private fun StringBuilder.field(name: String, value: String) {
-        append('"').append(name).append("\":\"").append(value.escapeJson()).append("\",")
-    }
-
-    private fun StringBuilder.field(name: String, value: Long) {
-        append('"').append(name).append("\":").append(value).append(',')
-    }
-
-    private fun StringBuilder.field(name: String, value: Int) {
-        append('"').append(name).append("\":").append(value).append(',')
-    }
-
-    private fun String.escapeJson(): String = buildString {
-        this@escapeJson.forEach { char ->
-            when (char) {
-                '\\' -> append("\\\\")
-                '"' -> append("\\\"")
-                '\n' -> append("\\n")
-                '\r' -> append("\\r")
-                else -> append(char)
-            }
-        }
-    }
 }

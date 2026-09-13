@@ -8,15 +8,19 @@ import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import com.photocoach.coach.Cue
 import java.util.Locale
-import java.util.concurrent.ConcurrentHashMap
 
 class GuidanceTts(context: Context) {
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
     private val audio = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-    private val callbacks = ConcurrentHashMap<String, SpeechCallbacks>()
+    private val completion = SpeechCompletionGate()
     private val readiness = TtsReadinessGate<PendingSpeech>()
     private var tts: TextToSpeech? = null
-    @Volatile
-    private var activeUtteranceId: String? = null
+    internal val isSpeaking: Boolean get() = tts?.isSpeaking == true
+    internal var submittedUtterances: Long = 0
+        private set
+    /** Counts only a SUCCESS stop request issued while the real engine was speaking. */
+    internal var stoppedWhileSpeaking: Long = 0
+        private set
 
     init {
         tts = TextToSpeech(context.applicationContext) { status ->
@@ -31,14 +35,12 @@ class GuidanceTts(context: Context) {
             if (available && engine != null) {
                 engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
-                        activeUtteranceId = utteranceId
+                        // enqueue owns the ID; a late old onStart cannot replace it.
                     }
 
                     override fun onDone(utteranceId: String?) {
-                        utteranceId?.let {
-                            if (activeUtteranceId == it) activeUtteranceId = null
-                            callbacks.remove(it)?.onFinished?.invoke()
-                        }
+                        complete(utteranceId, failed = false)
+
                     }
 
                     @Deprecated("Deprecated by Android")
@@ -51,10 +53,8 @@ class GuidanceTts(context: Context) {
                     }
 
                     override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                        utteranceId?.let {
-                            if (activeUtteranceId == it) activeUtteranceId = null
-                            callbacks.remove(it)?.onUnavailable?.invoke()
-                        }
+                        complete(utteranceId, failed = true)
+
                     }
                 })
                 readiness.markReady()?.let(::enqueue)
@@ -97,26 +97,27 @@ class GuidanceTts(context: Context) {
         }
         cancelActiveSpeech()
         val utteranceId = "${request.cue.id.name}-${System.nanoTime()}"
-        callbacks[utteranceId] = request.callbacks
-        activeUtteranceId = utteranceId
+        completion.begin(utteranceId) { failed ->
+            if (failed) request.reportUnavailable() else request.callbacks.onFinished()
+        }
         val speechParams = Bundle().apply {
             putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
         }
         val result = engine.speak(request.cue.text, TextToSpeech.QUEUE_FLUSH, speechParams, utteranceId)
+        if (result == TextToSpeech.SUCCESS) submittedUtterances++
         if (result != TextToSpeech.SUCCESS) {
-            activeUtteranceId = null
-            callbacks.remove(utteranceId)
+            completion.cancel()
             request.reportUnavailable()
         }
     }
 
-    private fun handleError(utteranceId: String?) {
-        utteranceId?.let { id ->
-            if (activeUtteranceId == id) activeUtteranceId = null
-            callbacks.remove(id)?.reportUnavailable()
+    private fun handleError(utteranceId: String?) { complete(utteranceId, failed = true) }
+
+    private fun complete(id: String?, failed: Boolean) {
+        main.post {
+            completion.complete(id, failed)
         }
     }
-
     private fun configureChineseVoice(engine: TextToSpeech): Int {
         val languageStatus = engine.setLanguage(Locale.SIMPLIFIED_CHINESE)
         if (languageStatus == TextToSpeech.LANG_MISSING_DATA ||
@@ -126,11 +127,12 @@ class GuidanceTts(context: Context) {
         }
 
         // Keep the coaching path offline when the engine exposes a local Chinese voice.
-        // Some OEM engines return no voice list; setLanguage remains the safe fallback.
-        preferredOfflineChineseVoice(engine)?.let { voice ->
-            if (engine.setVoice(voice) != TextToSpeech.SUCCESS) {
-                engine.setLanguage(Locale.SIMPLIFIED_CHINESE)
-            }
+        // If the voice list is absent, the selected voice must still explicitly be offline.
+        val voice = preferredOfflineChineseVoice(engine)
+        if (voice != null) {
+            if (engine.setVoice(voice) != TextToSpeech.SUCCESS) return TextToSpeech.LANG_NOT_SUPPORTED
+        } else if (runCatching { engine.voice?.isNetworkConnectionRequired != false }.getOrDefault(true)) {
+            return TextToSpeech.LANG_MISSING_DATA
         }
         engine.setSpeechRate(CHINESE_SPEECH_RATE)
         engine.setPitch(CHINESE_PITCH)
@@ -159,14 +161,14 @@ class GuidanceTts(context: Context) {
     }
 
     private fun cancelActiveSpeech() {
-        activeUtteranceId?.let(callbacks::remove)
-        activeUtteranceId = null
-        tts?.stop()
+        val wasSpeaking = tts?.isSpeaking == true
+        completion.cancel()
+        val result = tts?.stop()
+        if (wasSpeaking && result == TextToSpeech.SUCCESS) stoppedWhileSpeaking++
     }
 
     fun shutdown() {
         stop()
-        callbacks.clear()
         tts?.shutdown()
         tts = null
     }

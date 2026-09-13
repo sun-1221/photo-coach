@@ -244,7 +244,8 @@ fun ViewfinderScreen(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .heightIn(max = portraitPanelMaxHeight)
+                        .then(if (density.fontScale > 1.1f) Modifier.heightIn(max = portraitPanelMaxHeight)
+                            else Modifier.height(portraitPanelMaxHeight))
                         .onSizeChanged { portraitDockHeight = with(density) { it.height.toDp() } },
                 )
             }
@@ -267,7 +268,7 @@ fun ViewfinderScreen(
                     if (suggestion.action != null) TextButton(onClick = { onApplyParameterSuggestion(suggestion) }) { Text("应用") }
                 }
                 TextButton(onClick = { onParameterPanelChange(false) }) { Text("关闭") }
-                Button(onClick = onCapture, enabled = ui.guidance.shutterEnabled) { Text("拍照") }
+                Button(onClick = onCapture, enabled = (ui.guidance.shutterEnabled && !ui.researchRoundPreparing && ThermalPolicy.forLevel(ui.thermalLevel).preserveShutter)) { Text("拍照") }
             }
         }
         ui.cameraError?.let { error ->
@@ -276,17 +277,6 @@ fun ViewfinderScreen(
                 onRetry = onRetryCamera,
                 onSettings = onOpenSettings,
                 modifier = Modifier.align(Alignment.Center),
-            )
-        }
-        ui.controlMessage?.let { message ->
-            Text(
-                text = message,
-                color = Color.White,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(8.dp))
-                    .testTag("control_message")
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
         ui.countdownSeconds?.let { seconds ->
@@ -359,6 +349,17 @@ fun ViewfinderScreen(
                 onTrashPhoto = onTrashPhoto,
                 onDismiss = onDismissCreativeResult,
                 modifier = Modifier.fillMaxSize(),
+            )
+        }
+        ui.controlMessage?.let { message ->
+            Text(
+                text = message,
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(8.dp))
+                    .testTag("control_message")
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
     }
@@ -586,12 +587,12 @@ private fun TopBar(
                 onClick = { onSelectIntent(ShotIntent.PERSON_WITH_SCENERY) },
             )
         }
-        if (ui.aeAfLocked) {
+        if (ui.lockState.canRelease) {
             FilledTonalButton(
                 onClick = onUnlockFocus,
                 modifier = Modifier.align(Alignment.CenterHorizontally).height(48.dp).testTag("ae_af_unlock"),
             ) {
-                Text("对焦和曝光已锁定 · 点此解除")
+                Text(ui.lockState.text + " · 解除")
             }
         }
     }
@@ -629,7 +630,14 @@ private fun OperationPanel(
     val spacing = PhotoCoachTokens.spacing
     val radii = PhotoCoachTokens.radii
     val masks = PhotoCoachTokens.masks
-    val guidanceHeight = 48.dp * LocalDensity.current.fontScale.coerceAtLeast(1f)
+    val guidanceStyle = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
+    val guidanceDensity = LocalDensity.current
+    val twoLinePixels = androidx.compose.ui.text.rememberTextMeasurer()
+        .measure("国\n国", style = guidanceStyle, maxLines = 2).size.height
+    // Stable two-line height, including actual font metrics and pixel rounding. The outer
+    // portrait panel retains its full-screen 20% allocation; text length never changes this height.
+    val guidanceHeight = with(guidanceDensity) { (twoLinePixels + 2).toDp() }
+        .coerceAtLeast(48.dp * guidanceDensity.fontScale.coerceAtLeast(1f))
     val guidanceAccent = when {
         ui.guidance.stage is GuidanceStage.SaveFailed -> MaterialTheme.colorScheme.error
         ui.guidance.stage is GuidanceStage.Saved -> MaterialTheme.colorScheme.secondary
@@ -669,7 +677,7 @@ private fun OperationPanel(
                 Text(
                     text = guidanceText(ui),
                     color = MaterialTheme.colorScheme.onSurface,
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                    style = guidanceStyle,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f).testTag("guidance_text"),
@@ -728,9 +736,9 @@ private fun OperationPanel(
                 modifier = Modifier
                     .size(64.dp)
                     .clip(CircleShape)
-                    .border(2.dp, Color.White.copy(alpha = if (ui.guidance.shutterEnabled) 1f else 0.35f), CircleShape)
+                    .border(2.dp, Color.White.copy(alpha = if ((ui.guidance.shutterEnabled && !ui.researchRoundPreparing && ThermalPolicy.forLevel(ui.thermalLevel).preserveShutter)) 1f else 0.35f), CircleShape)
                     .clickable(
-                        enabled = ui.guidance.shutterEnabled,
+                        enabled = (ui.guidance.shutterEnabled && !ui.researchRoundPreparing && ThermalPolicy.forLevel(ui.thermalLevel).preserveShutter),
                         role = Role.Button,
                         onClickLabel = if (ui.countdownSeconds != null) "取消倒计时" else "拍照",
                     ) {
@@ -744,7 +752,7 @@ private fun OperationPanel(
             ) {
                 Box(
                     Modifier.fillMaxSize().background(
-                        if (ui.guidance.shutterEnabled) colors.shutterEnabled else colors.shutterDisabled,
+                        if ((ui.guidance.shutterEnabled && !ui.researchRoundPreparing && ThermalPolicy.forLevel(ui.thermalLevel).preserveShutter)) colors.shutterEnabled else colors.shutterDisabled,
                         CircleShape,
                     ),
                     contentAlignment = Alignment.Center,
@@ -759,7 +767,7 @@ private fun OperationPanel(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                CreativeCaptureControl(
+                if (!ui.researchMode) CreativeCaptureControl(
                     ui = ui,
                     onStyleChange = onCreativeStyleChange,
                     onStyleStrengthChange = onCreativeStyleStrengthChange,
@@ -840,7 +848,8 @@ private fun CreativeCaptureControl(
             onClick = { expanded = true },
             enabled = !capturing,
             contentPadding = PaddingValues(4.dp),
-            modifier = Modifier.height(if (largeText) 64.dp else 48.dp).width(68.dp).testTag("creative_capture_menu"),
+            modifier = (if (largeText) Modifier.heightIn(min = 64.dp) else Modifier.height(48.dp))
+                .width(68.dp).testTag("creative_capture_menu"),
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 if (!largeText) Icon(Icons.Rounded.AutoAwesome, null, Modifier.size(20.dp))
@@ -1459,6 +1468,7 @@ private fun guidanceStageLabel(ui: ViewfinderUi, stage: GuidanceStage): String {
 }
 
 private fun guidanceText(ui: ViewfinderUi): String {
+    if (ui.researchRoundPreparing) return "正在恢复本轮实验相机初值"
     if (hasActiveLensWarning(ui)) return checkNotNull(ui.lensWarning)
     return when (val stage = ui.guidance.stage) {
         GuidanceStage.Initializing -> "正在准备相机"
@@ -1489,7 +1499,7 @@ private fun PoseCategory.poseLabel(): String = when (this) {
 }
 
 private fun hasActiveLensWarning(ui: ViewfinderUi): Boolean =
-    ui.lensWarning != null &&
+    !ui.staticResearch && ui.lensWarning != null &&
         ui.guidance.stage !is GuidanceStage.Capturing &&
         ui.guidance.stage !is GuidanceStage.Saved &&
         ui.guidance.stage !is GuidanceStage.SaveFailed

@@ -68,6 +68,7 @@ data class ZoomCapability(
 }
 
 data class CameraCapabilities(
+    val analysisSessionId: Long = 0L,
     val focalPresets: List<QuickFocalPreset> = emptyList(),
     val focalCandidates: List<QuickFocalPreset> = emptyList(),
     val selectedFocalId: String? = null,
@@ -76,6 +77,8 @@ data class CameraCapabilities(
     val exposure: ExposureCapability = ExposureCapability(),
     val zoom: ZoomCapability = ZoomCapability(),
     val extensionFallback: Boolean = false,
+    val afLockSupported: Boolean = false,
+    val aeLockSupported: Boolean = false,
     val livePhotoAvailable: Boolean = false,
     val livePhotoFallbackReason: String? = null,
 ) {
