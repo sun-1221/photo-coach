@@ -15,3 +15,5 @@ CPU 与 GPU 的低分辨率采样、浮点精度及 JPEG 编码不同，只共�
 状态反馈：`BeautyPreviewState` 从同一帧的预设、热门禁、有效单脸/蒙版、输出变换和原始时间戳计算；仅实际 render/swap 成功后回传，状态变化最多每 500ms 通知一次 UI，处理归零不等待 UI 节流。回调需匹配当前 FaceStore，已释放/替换效果不能回写新会话。状态不记录关键点、帧或身份，也不是肤质效果已验收的证据。
 
 API 依据：[CameraEffect](https://developer.android.com/reference/androidx/camera/core/CameraEffect)、[SurfaceProcessor](https://developer.android.com/reference/androidx/camera/core/SurfaceProcessor)、[SurfaceOutput](https://developer.android.com/reference/androidx/camera/core/SurfaceOutput)、[Fast Guided Filter](https://arxiv.org/abs/1505.00996)。接口按 pinned release 编译检查，设备效果/性能 NotRun，不承诺像素完全一致。
+
+2026-09-12：自然上镜自身暂停不得锁普通快门；若系统热保护撤回相机或关闭组件，则按相机真实不可用处理并尽可能保留捕获源/日志，不能将“普通快门继续”解释为系统关闭硬件后仍保证拍摄。配方、恢复源和日志遵循创意存储的持久暂存及备份排除合同。

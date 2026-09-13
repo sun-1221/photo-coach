@@ -18,7 +18,7 @@
 
 ## 2026-09-05 产品决议对架构的约束
 
-CP-03 已选择独立参数面板，CP-04 已选择按覆盖推导口令数量，CP-05 已将非目标设备用例限定为非阻断健壮性检查。完整历史双方及用户决议保留在[需求决策与冲突记录](../traceability/decisions-and-conflicts.md)。对应架构目标合同已同步；不把规范修订当作代码迁移、回归测试或真机通过。CP-01 仍未决。
+CP-03 已选择独立参数面板，CP-04 已选择按覆盖推导口令数量，CP-05 已将非目标设备用例限定为非阻断健壮性检查。完整历史双方及用户决议保留在[需求决策与冲突记录](../traceability/decisions-and-conflicts.md)。对应架构目标合同已同步；不把规范修订当作代码迁移、回归测试或真机通过。CP-01 于 2026-09-12 按用户选择统一为整个屏幕高度的约五分之一；目标机验证 NotRun。
 
 ## 原始决策依据
 
@@ -74,3 +74,13 @@ iOS 成片走系统 Photo 管线，对应 Android 的 CameraX Extensions。合�
 - 通过 `CameraEffect`、LUT、小米私有 API 或覆盖原片实现 P1 风格
 - 第一版就上 KMP 整包 UI
 - 为了「纯 C#」把 CameraX 绑定当唯一实现
+
+2026-09-12：本轮仅按用户逐项审核/优化需求的要求修订公开API语义和验收边界，未替换技术选型或升级依赖。AF/AE分项确认、画质/速度优先、持久源与备份排除、系统热撤回和Live缓存不足回退见[修订记录](../traceability/requirements-optimization-2026-09-12.md)。既有ADR范围不扩大；本审核不代裁实验/校准项；CP-01 后续按用户明确选择完成决议，见冲突记录。
+
+## 8. Live 四用例双编码器（2026-09-13 用户明确裁决）
+
+用户选择“保留四用例＋双编码器（资源开销更大）”。固定 CameraX 1.6.1，采用已核查合法的 VIDEO_CAPTURE-only CameraEffect/SurfaceProcessor；保留 Preview/ImageAnalysis/ImageCapture/VideoCapture<Recorder>。Recorder承担公开协商并生成有界丢弃临时输出，自有 MediaCodec/Muxer 产生唯一正式视频。不得升级依赖或使用受限/私有API、反射；Live与美颜仍互斥。
+
+两路独立所有权与有界分流，共享会话代次。输入sensor时间须与同相机代次CaptureResult精确关联，再记录提交PTS和实际保留编码/mux样本；Start/Stats不能当锚点。UNKNOWN同sensor域仅在精确关联证据成立时可用，质量Fresh门禁保持独立。资源、样本不足或关联失败保留原片并回退JPEG；不等待第二编码器而锁住快门。
+
+影响FR-31/UX-36、相机会话与创意存储专题；当前Delivery为实现中，非真机/目标机验证分别记录。历史O09阻塞与[两次公开API研究](../traceability/live-public-api-research-2026-09-12.md)保留。用户本次未冻结媒体时长/封面偏差容差，未批准目标机通过。

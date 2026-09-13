@@ -1,7 +1,7 @@
 # 拍照教练：技术架构
 
 - 状态：已按需求拍板，第一版采用方案 A
-- 更新日期：2026-08-31
+- 更新日期：2026-09-12
 - 产品依据：[产品需求总纲](requirement.md)
 - 技术决定：[architecture/decisions.md](architecture/decisions.md)
 - 追踪矩阵：[功能需求定义与追踪矩阵](traceability/requirements-matrix.md)
@@ -152,10 +152,14 @@ Live 仅在显式开启且四用例能力允许时增加无音轨 VideoCapture�
 
 历史自动化结果（2026-08-31）：coach JVM Pass；Android JVM Pass；ExplainApi .NET Pass（3/3），当时 Android instrumented 与目标机证据为 NotRun。2026-09-03 自然上镜实施新增模拟器仪器验证，详见[美颜验证报告](traceability/beauty-validation-2026-09-03.md)；不据此改写历史或目标机 NotRun。完整文档基线见[验证报告](traceability/validation-report.md)。
 
-当前没有小米 14 Pro 连接证据。快捷焦段/EXIF、真实 Zoom/EV、Extensions 三用例、AE/AF 3A、画幅成片、音量键倒计时、连续 100 张保存、遮挡/污渍误报、十二种风格和七项编辑真实颜色、连拍间隔/热量/推荐有效性、HyperOS MediaStore 分阶段保存/收藏/回收站、广色域/Ultra HDR，以及 Live 四用例绑定、编码、裁剪和 Motion Photo 播放全部为 NotRun。唯一详细状态以[目标机真机矩阵](acceptance/acceptance-plan.md#92-目标机真机矩阵)和[功能需求定义与追踪矩阵](traceability/requirements-matrix.md)为准。
+2026-08-31 基线轮次没有目标机连接；2026-09-03 已有[局部真机证据及失败](traceability/combined-device-validation-2026-09-03.md)。当前完整合同尚无覆盖全部项目的通过证据；历史局部 Pass/Fail 保留，不由本轮文档修订覆盖。快捷焦段/EXIF、真实 Zoom/EV、Extensions 三用例、AE/AF 3A、画幅成片、音量键倒计时、连续 100 张保存、遮挡/污渍误报、十二种风格和七项编辑真实颜色、连拍间隔/热量/推荐有效性、HyperOS MediaStore 分阶段保存/收藏/回收站、广色域/Ultra HDR，以及 Live 四用例绑定、编码、裁剪和 Motion Photo 播放全部为 NotRun。唯一详细状态以[目标机真机矩阵](acceptance/acceptance-plan.md#92-目标机真机矩阵)和[功能需求定义与追踪矩阵](traceability/requirements-matrix.md)为准。
 
 ## 9. 需求修订与剩余接口
 
 2026-09-05 按用户同意的方案：CP-03 采用主动打开的独立参数面板；CP-04 由行为覆盖推导口令数量；CP-05 定位非目标设备检查为非阻断健壮性检查。历史双方与决议见[需求决策与冲突记录](traceability/decisions-and-conflicts.md)。
 
-CP-01 布局测量分母和阈值仍为 ConflictPending；最低可拍信号的有效期/校准、实验待决参数及旧保存日志身份映射仍为 Unknown。修订后的状态、面板及恢复合同未做代码符合性和动态验证，不沿用历史测试结果宣称通过。
+CP-01 已于 2026-09-12 统一为默认字号下约整个屏幕高度的五分之一，源码已核对全屏20%目标，目标机布局验收NotRun。状态、面板、持久恢复及旧日志处理的明确代码缺口已修复并独立复验；未知历史归属继续不猜。感知有效期/阈值、实验配置、真实存储恢复、颜色与热校准仍待验证，详见[总控验收记录](traceability/completion-2026-09-12.md)。
+
+## 10. 2026-09-12 逐项需求审核修订
+
+对应[逐项矩阵](research/requirements-line-audit-2026-09-12.md)与[修订登记](traceability/requirements-optimization-2026-09-12.md)：分开 AF/AE 请求与确认，画质/速度优先名称与 API 对齐；新鲜帧/会话边界、持久暂存与备份排除、Live 缓存不足回退以及系统热撤回边界同步专题。需求审核阶段未改业务代码；后续三轮工程修复已独立复验，持久暂存与旧日志处理已接线，2026-09-13已补真实跨进程同身份恢复（不声称写入瞬间强杀）。CameraX仍固定1.6.1；用户批准的方案C已通过公开VIDEO_CAPTURE effect接入自有编码账本及同JPEG曝光timestamp，合成双MP4正向通过。实际CameraX仍有完成超时及JPEG回退，正在阶段诊断，完整Live正向未验证，不能沿用旧的空编码锚点结论。CP-01已解决，实验公式和感知/媒体/热校准仍待冻结或验证，不从研究示例取默认值。

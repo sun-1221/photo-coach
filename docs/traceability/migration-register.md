@@ -99,7 +99,7 @@ A. 盘点并保存版本化历史正文；B. 研究依据；C. 产品规格与�
 
 | ID | 旧内容来源 | Status | 保留位置 |
 | --- | --- | --- | --- |
-| CP-01 | requirement 5.4 与 UX-15 | ConflictPending | [需求决策与冲突记录](decisions-and-conflicts.md) |
+| CP-01 | requirement 5.4 与 UX-15；2026-09-12用户统一为约整个屏幕高度五分之一 | Consolidated | [需求决策与冲突记录](decisions-and-conflicts.md) |
 | CP-02 | UX-06 与 UX-31，以及状态规则 | Consolidated | [需求决策与冲突记录](decisions-and-conflicts.md) |
 | CP-03 | requirement 1.3/5.4 的一次一件事与 12.2/UX-33 的三张参数卡 | Consolidated | [需求决策与冲突记录](decisions-and-conflicts.md) |
 | CP-04 | requirement 11.5 的 12–16 与 architecture 4 的 8–12 | Consolidated | [需求决策与冲突记录](decisions-and-conflicts.md) |
@@ -115,3 +115,7 @@ A. 盘点并保存版本化历史正文；B. 研究依据；C. 产品规格与�
 6. NotRun/Unknown 不因路径存在、文档迁移或自动化通过而改变。
 
 2026-09-05 修订说明：11.5、12.2、口令专题和创意领域模型及 CP-03/04/05 按用户决议合并口径，状态为 Consolidated；CP-01 继续 ConflictPending。原迁移时点的数量、布局和三卡冲突保留于历史及决策记录，不用本次修订回写旧验证结论。
+
+## 2026-09-12 语义优化登记（Consolidated）
+
+本节是后续需求优化记录，不重写2026-08-31零丢失迁移时点事实。用户要求逐项审核并优化需求，本轮对锁定/捕获偏好、会话/新鲜帧、保存/备份、Live/热边界及证据日期的相关条款同步修订，状态Consolidated；具体旧含义、优化后合同和涉及FR/UX见[修订记录](requirements-optimization-2026-09-12.md)。范围不扩大，历史快照与旧验证报告保留；该审核时点CP-01未决，后续已按用户裁决Consolidated；FR-16和实验/校准未决项保持待决，不以研究推导替决策。
