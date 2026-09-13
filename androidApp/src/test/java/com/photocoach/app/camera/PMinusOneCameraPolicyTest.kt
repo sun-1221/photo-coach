@@ -10,15 +10,14 @@ import org.junit.jupiter.api.Test
 class PMinusOneCameraPolicyTest {
     @Test
     fun manifestRequestsCameraOnly() {
-        val manifest = File("src/main/AndroidManifest.xml").readText()
-        assertTrue(manifest.contains("android.permission.CAMERA"))
-        listOf(
-            "android.permission.INTERNET",
-            "android.permission.WRITE_EXTERNAL_STORAGE",
-            "android.permission.READ_MEDIA_IMAGES",
-            "android.permission.RECORD_AUDIO",
-            "android.permission.ACCESS_FINE_LOCATION",
-        ).forEach { assertFalse(manifest.contains(it), "P-1 must not request $it") }
+        val factory = javax.xml.parsers.DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+        val manifest = factory.newDocumentBuilder().parse(File("build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml"))
+        val permissions = manifest.getElementsByTagName("uses-permission")
+        val names = (0 until permissions.length).map {
+            (permissions.item(it) as org.w3c.dom.Element).getAttributeNS("http://schemas.android.com/apk/res/android", "name")
+        }.toSet()
+        assertEquals(setOf("android.permission.CAMERA"), names.filter { it.startsWith("android.permission.") }.toSet())
+        assertTrue("com.photocoach.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION" in names)
     }
 
     @Test

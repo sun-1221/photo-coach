@@ -49,7 +49,7 @@ class PoseSignalClassifierTest {
         val missingHip = baseInput().copy(rightHip = null)
         val lowConfidenceShoulder = baseInput().copy(rightShoulder = point(50f, 0f, likelihood = 0.2f))
 
-        assertTrue(PoseSignalClassifier.classify(missingHip).shouldersSquare)
+        assertFalse(PoseSignalClassifier.classify(missingHip).shouldersSquare)
         assertFalse(PoseSignalClassifier.classify(lowConfidenceShoulder).shouldersSquare)
         assertFalse(PoseSignalClassifier.classify(missingHip).handsNeedPlacement)
     }
@@ -65,14 +65,14 @@ class PoseSignalClassifierTest {
     }
 
     @Test
-    fun halfBodyShoulderDepthMakesBodyTurnChangeTheCue() {
+    fun uncalibratedShoulderDepthDoesNotInventBodyTurnWithoutTorso() {
         val front = baseInput().copy(leftHip = null, rightHip = null)
         val turned = front.copy(
             leftShoulder = point(-45f, 0f, z = -35f),
             rightShoulder = point(45f, 0f, z = 35f),
         )
 
-        assertTrue(PoseSignalClassifier.classify(front).shouldersSquare)
+        assertFalse(PoseSignalClassifier.classify(front).shouldersSquare)
         assertFalse(PoseSignalClassifier.classify(turned).shouldersSquare)
     }
 

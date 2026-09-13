@@ -5,6 +5,12 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class FaceDetailClassifierTest {
+    @Test fun unknownEyeClassificationIsDistinctFromKnownOpenEyes() {
+        assertTrue(classify(0f, .9f, .9f).eyesKnown)
+        assertFalse(classify(0f, .9f, null).eyesKnown)
+        assertFalse(classify(0f, Float.NaN, .9f).eyesKnown)
+        assertFalse(classify(null, .9f, .9f).eyesKnown)
+    }
     @Test
     fun turnedFaceWinsAndDoesNotGuessEyeOrExpressionDetails() {
         val result = classify(yaw = 24f, leftEye = 0.1f, rightEye = 0.1f)
